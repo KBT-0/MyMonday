@@ -24,9 +24,11 @@
 #   service   run the Hermes gateway as AGENT_USER's service that survives reboot
 #   backup    nightly encrypted restic backup to R2 as root. Enables the timer once
 #             /etc/mymonday/restic.env (R2 credentials, entered by hand) exists.
+#   lockdown  last step: <admin-user>'s sudo requires its password. Needs a password set and
+#             CONFIRMED_SUDO_PASSWORD=yes; restores itself in 10 min unless cancelled.
 #
 # With no phase given, runs: base user tailscale agent userland hermes persona
-# (harden, routing, service and backup are always explicit: they need a human step first).
+# (harden, routing, service, backup and lockdown are always explicit: they need a human step first).
 #
 # Environment overrides:
 #   AGENT_USER        default: monday
@@ -53,6 +55,8 @@ PHASES=("$@")
 AGENT_USER="${AGENT_USER:-monday}"
 PROJECTS_DIR="${PROJECTS_DIR:-/srv/projects}"
 PROJECTS_GROUP="${PROJECTS_GROUP:-projects}"
+SUDO_LOCK_MARKER=/etc/mymonday/sudo-password-required
+REVERT_UNIT=mymonday-sudo-revert
 [ "$AGENT_USER" != "$USERNAME" ] || { echo "AGENT_USER must differ from <admin-user>" >&2; exit 2; }
 SERVER_HOSTNAME="${SERVER_HOSTNAME:-monday}"
 SERVER_TIMEZONE="${SERVER_TIMEZONE:-UTC}"
@@ -133,18 +137,26 @@ EOF
   sysctl -q -p /etc/sysctl.d/99-swappiness.conf
 }
 
+write_nopasswd_sudoers() {
+  echo "$USERNAME ALL=(ALL) NOPASSWD:ALL" > "$1.tmp"
+  chmod 440 "$1.tmp"
+  visudo -cf "$1.tmp" >/dev/null
+  mv "$1.tmp" "$1"
+}
+
 phase_user() {
   log "user: $USERNAME"
   if ! id "$USERNAME" >/dev/null 2>&1; then
     useradd --create-home --shell /bin/bash --groups sudo "$USERNAME"
   fi
   usermod -aG sudo "$USERNAME"
-  # Password-less sudo for the human operator only; the assistant runs as AGENT_USER.
-  local sudoers="/etc/sudoers.d/90-$USERNAME"
-  echo "$USERNAME ALL=(ALL) NOPASSWD:ALL" > "$sudoers.tmp"
-  chmod 440 "$sudoers.tmp"
-  visudo -cf "$sudoers.tmp" >/dev/null
-  mv "$sudoers.tmp" "$sudoers"
+  # Password-less sudo only until the lockdown phase: a fresh operator has no password yet,
+  # and the unattended phases need sudo. After lockdown this is never written again.
+  if [ -e "$SUDO_LOCK_MARKER" ]; then
+    log "sudo for $USERNAME requires a password (lockdown applied); leaving it"
+  else
+    write_nopasswd_sudoers "/etc/sudoers.d/90-$USERNAME"
+  fi
 
   local home; home="$(getent passwd "$USERNAME" | cut -d: -f6)"
   install -d -m 700 -o "$USERNAME" -g "$USERNAME" "$home/.ssh"
@@ -226,6 +238,11 @@ phase_agent() {
   chmod 700 "$(home_of "$AGENT_USER")"
   # Keep the user's systemd manager running without a login, for the gateway service.
   loginctl enable-linger "$AGENT_USER"
+  # So `sudo -iu monday` can reach its systemd user manager (systemctl --user, hermes gateway).
+  local rc; rc="$(home_of "$AGENT_USER")/.bashrc"
+  grep -q '# systemd user bus (mymonday)' "$rc" 2>/dev/null ||
+    printf '\n# systemd user bus (mymonday)\nexport XDG_RUNTIME_DIR="/run/user/$(id -u)"\n' >> "$rc"
+  chown "$AGENT_USER:$AGENT_USER" "$rc"
 
   log "shared projects: $PROJECTS_DIR (group $PROJECTS_GROUP: $USERNAME, $AGENT_USER)"
   command -v setfacl >/dev/null || apt-get "${APT_OPTS[@]}" install acl
@@ -343,6 +360,30 @@ phase_service() {
   '
 }
 
+phase_lockdown() {
+  log "lockdown: sudo for $USERNAME requires its password"
+  [ "$(passwd -S "$USERNAME" | cut -d' ' -f2)" = P ] ||
+    die "$USERNAME has no usable password; set one first (passwd $USERNAME) and store it safely"
+  [ "${CONFIRMED_SUDO_PASSWORD:-}" = yes ] ||
+    die "set CONFIRMED_SUDO_PASSWORD=yes after checking you know $USERNAME's password (su $USERNAME -c true)"
+  local sudoers="/etc/sudoers.d/90-$USERNAME"
+  install -d -m 700 "$(dirname "$SUDO_LOCK_MARKER")"
+  touch "$SUDO_LOCK_MARKER"
+  if [ ! -e "$sudoers" ]; then
+    log "already locked down"
+    return 0
+  fi
+  # Dead man's switch: restore password-less sudo in 10 minutes unless the operator cancels it
+  # after testing `sudo` with the password. Protects against a mistyped or forgotten password.
+  systemctl stop "$REVERT_UNIT.timer" 2>/dev/null || true
+  systemd-run --quiet --unit="$REVERT_UNIT" --on-active=10min \
+    /bin/sh -c "echo '$USERNAME ALL=(ALL) NOPASSWD:ALL' > $sudoers && chmod 440 $sudoers && rm -f $SUDO_LOCK_MARKER"
+  rm -f "$sudoers"
+  visudo -c >/dev/null
+  echo "NOPASSWD removed. It comes back automatically in 10 minutes unless you run, in a NEW session:"
+  echo "  sudo -k && sudo true && sudo systemctl stop $REVERT_UNIT.timer"
+}
+
 phase_backup() {
   log "backup: restic to R2, nightly timer (root only)"
   local conf=/etc/mymonday src="$SCRIPT_DIR/backup"
@@ -375,7 +416,7 @@ phase_backup() {
 
 for p in "${PHASES[@]}"; do
   case "$p" in
-    base|user|tailscale|harden|agent|userland|hermes|persona|routing|service|backup) "phase_$p" ;;
+    base|user|tailscale|harden|agent|userland|hermes|persona|routing|service|backup|lockdown) "phase_$p" ;;
     *) die "unknown phase: $p" ;;
   esac
 done

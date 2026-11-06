@@ -45,6 +45,7 @@ flowchart LR
 | `routing` | Opus as main model, Sonnet and Fable as delegation routes |
 | `service` | Gateway as a systemd user service that survives reboots |
 | `backup` | Nightly encrypted restic backup to Cloudflare R2, as root |
+| `lockdown` | Operator sudo requires a password, with a 10-minute automatic revert as a safety net |
 
 The step-by-step rebuild guide, including the manual steps, is in [`server/README.md`](server/README.md).
 
@@ -63,6 +64,11 @@ first value it reads, and cloud images ship their own drop-ins.
 no SSH keys, and no access to the operator's home. Projects live in a shared directory with a
 default ACL so both accounts can work on them. When root is needed, Monday hands the operator
 the command. A prompt injection can only act with the rights of that one account.
+
+**Least privilege at the end, with a dead man's switch.** The unattended phases need password-less
+sudo; the final `lockdown` phase removes it. It refuses to run unless the operator has a password and
+confirms knowing it, and it schedules a 10-minute revert that the operator cancels only after a
+successful `sudo` with the password in a new session.
 
 **Secrets never touch the repo, the logs or the automation.** API keys and the bot token are typed
 by the owner into Hermes's own prompts in an SSH session. They live in `~/.hermes/.env` and
@@ -103,7 +109,7 @@ inherit the parent's tools. That trade-off is documented rather than hidden.
 - [x] Encrypted restic backups to Cloudflare R2, root-only, with a documented restore path
 - [ ] First backup run against the real R2 bucket
 - [ ] Restricted SSH entry for a second machine (forced command)
-- [ ] Hetzner Cloud Firewall as a second layer in front of ufw
+- [ ] Hetzner Cloud Firewall as a second layer in front of ufw (script ready: `server/hetzner/firewall.sh`)
 
 ## Repository layout
 
@@ -115,6 +121,9 @@ server/
     SOUL.md               Monday's identity and voice
     model_map.json        delegation routes (light, advisor)
     skins/monday.yaml     CLI branding
+  hetzner/
+    firewall.sh           provider firewall via hcloud (run from the operator's machine)
+    firewall-rules.json   inbound: Tailscale UDP 41641 and ICMP only
   backup/
     mymonday-backup       restic backup / restore wrapper (root only)
     mymonday-backup.*     systemd service + nightly timer

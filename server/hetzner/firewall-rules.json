@@ -1,0 +1,15 @@
+[
+  {
+    "description": "Tailscale direct connections (WireGuard)",
+    "direction": "in",
+    "protocol": "udp",
+    "port": "41641",
+    "source_ips": ["0.0.0.0/0", "::/0"]
+  },
+  {
+    "description": "ICMP for path MTU discovery and diagnostics",
+    "direction": "in",
+    "protocol": "icmp",
+    "source_ips": ["0.0.0.0/0", "::/0"]
+  }
+]

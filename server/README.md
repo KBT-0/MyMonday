@@ -10,7 +10,7 @@ Nothing in `bootstrap.sh` is arm64-specific; it also runs on x86_64 Debian 13.
 
 | Account | Purpose | Privileges |
 |---|---|---|
-| `kemal` | Human operator. SSH over Tailscale. | Password-less sudo. |
+| `kemal` | Human operator. SSH over Tailscale. | sudo with password (password-less only until the `lockdown` phase). |
 | `monday` | Runs Hermes (Monday). | No sudo, locked password, no SSH keys, home `700`. Reached with `sudo -iu monday`. |
 
 Both are in the `projects` group and share `/srv/projects` (setgid, default ACL `g:projects:rwx`),
@@ -116,6 +116,25 @@ packages; for root work it gives the operator the command.
 
    On a rebuild, restore before step 6 instead of entering secrets again (see [Restore](#restore)).
 
+10. Provider firewall, from the Mac (see [Hetzner Cloud Firewall](#hetzner-cloud-firewall)):
+
+    ```sh
+    hcloud context create mymonday     # once; prompts for a project API token
+    server/hetzner/firewall.sh <hetzner-server-name>
+    ```
+
+11. Last: sudo with a password for the operator. Check you know the password first, then
+    lock down, then test in a **new** session within 10 minutes and cancel the automatic revert:
+
+    ```sh
+    ssh kemal@monday 'su kemal -c true'   # asks for the password; must succeed
+    ssh kemal@monday 'sudo CONFIRMED_SUDO_PASSWORD=yes bash /root/MyMonday/server/bootstrap.sh kemal lockdown'
+    ssh -t kemal@monday 'sudo -k && sudo true && sudo systemctl stop mymonday-sudo-revert.timer'
+    ```
+
+    If the password does not work, wait 10 minutes: password-less sudo comes back by itself.
+    After lockdown, every later phase is run by the operator with `ssh -t` (sudo asks for the password).
+
 ## Backups
 
 `mymonday-backup` runs nightly at 03:30 as root (`mymonday-backup.timer`) and stores an encrypted,
@@ -179,18 +198,60 @@ back with `~/.hermes`, so step 6 is skipped.
 | persona | `~/.hermes/SOUL.md` (default kept as `SOUL.md.default`), `~/.hermes/skins/monday.yaml`, `display.skin: monday` |
 | routing | `advanced-delegation` plugin, `model.default: claude-opus-5-5`, `delegation.backend: model_map` with routes `light` (Sonnet) and `advisor` (Fable) |
 | service | `loginctl enable-linger monday`; `hermes gateway install` (systemd user unit, starts at boot) |
+| lockdown | removes `/etc/sudoers.d/90-<admin>` (sudo then asks for the password), marker `/etc/mymonday/sudo-password-required`, 10-minute revert timer `mymonday-sudo-revert` |
 | backup | `/usr/local/sbin/mymonday-backup`, `mymonday-backup.{service,timer}` (+ drop-in with the user names), `/etc/mymonday` (700), generated `restic.pass`; `restic init` and the timer once `restic.env` exists |
 
 Override defaults with `AGENT_USER`, `PROJECTS_DIR`, `PROJECTS_GROUP`, `SERVER_HOSTNAME`,
 `SERVER_TIMEZONE`, `SWAP_SIZE`.
+
+## Telegram token rotation
+
+Do this whenever the bot token may have been exposed (the first token came through Nous's
+hosted onboarding bot). Monday is offline from the revoke until the new token is in.
+
+1. Telegram, @BotFather: `/mybots` → the bot → **API Token** → **Revoke current token**. Copy the new token.
+2. On the server, as `monday`:
+
+   ```sh
+   ssh -t kemal@monday sudo -iu monday
+   hermes gateway setup     # Telegram → Manual → paste the new token; keep the allowlist as is
+   systemctl --user restart hermes-gateway
+   grep '^TELEGRAM_ALLOWED_USERS' ~/.hermes/.env   # only your user ID
+   ```
+
+3. Send Monday a message.
+
+## Hetzner Cloud Firewall
+
+`server/hetzner/firewall.sh` creates (or updates) a provider-side firewall named `mymonday`
+from `server/hetzner/firewall-rules.json` and attaches it to the server: inbound only Tailscale
+UDP 41641 and ICMP, outbound unrestricted. It is a second layer in front of ufw, so a ufw
+mistake does not expose anything. The API token stays in the local hcloud context; the
+script never sees it.
+
+## Possible sudo whitelist for Monday (none granted)
+
+Monday has no sudo. If a task later needs root, grant one exact command in
+`/etc/sudoers.d/91-monday` (no wildcards, no shells, no editors, no `systemctl edit`), for example:
+
+| Need | Exact command |
+|---|---|
+| Deploy reload of a specific web server | `/usr/bin/systemctl reload caddy` |
+| Restart one app service it deploys | `/usr/bin/systemctl restart <app>.service` |
+| Read a system service's logs | `/usr/bin/journalctl -u <app>.service --no-pager -n 200` |
+| Check firewall state | `/usr/sbin/ufw status verbose` |
+| Run the backup on demand | `/usr/local/sbin/mymonday-backup backup` |
+
+Package installs (`apt`) stay with the operator: an allowed `apt install` can run arbitrary
+maintainer scripts as root.
 
 ## Known risks and notes
 
 - Monday can run shell commands as `monday`. A prompt injection in content it reads can act with
   that user's rights: its own files, `/srv/projects`, and the API keys in its `~/.hermes`.
   It cannot reach root or the operator's home. Keep project secrets out of `/srv/projects`.
-- `kemal` keeps password-less sudo for convenience. It is only reachable over Tailscale with
-  an SSH key.
+- `kemal`'s sudo asks for its password after the `lockdown` phase. Before that (during the
+  unattended phases) it is password-less.
 - With ufw `deny`, public port 22 is dropped, so a test shows a timeout rather than "connection refused".
 - SSH over the public IP is closed after `harden`. Access is via Tailscale only; the provider's
   web console is the fallback (log in as `kemal` with its console password).
@@ -200,4 +261,4 @@ Override defaults with `AGENT_USER`, `PROJECTS_DIR`, `PROJECTS_GROUP`, `SERVER_H
 ## Open items
 
 - Restricted SSH entry for a second machine (forced command).
-- Hetzner Cloud Firewall as a second layer in front of ufw.
+- First real run of `firewall.sh` and of the backup against R2.
