@@ -1,0 +1,6 @@
+name: monday
+description: Monday branding on the default Hermes theme
+branding:
+  agent_name: "Monday"
+  welcome: "Monday is ready."
+  response_label: " Monday "

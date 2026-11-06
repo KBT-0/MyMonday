@@ -1,0 +1,121 @@
+# monday server
+
+Always-on personal server that runs the Hermes Agent gateway ("Monday") on Telegram,
+plus light dev and deploy work. Heavy builds run elsewhere.
+
+Current host: Hetzner Cloud small ARM VPS (arm64, 2 vCPU, 4 GB RAM, 40 GB), Debian 13, EU.
+Nothing in `bootstrap.sh` is arm64-specific; it also runs on x86_64 Debian 13.
+
+## Files
+
+- `bootstrap.sh` - every system change, split into idempotent phases. Run as root.
+- `hermes/SOUL.md` - Monday's identity and voice (installed to `~/.hermes/SOUL.md`).
+- `hermes/skins/monday.yaml` - CLI branding, agent name "Monday" (`display.skin: monday`).
+
+## Rebuild from zero
+
+1. Create a Debian 13 server with your Mac's SSH key for root. Note its public IP.
+   Keep the provider's web console (Hetzner: Console in the server view) open as a fallback.
+
+2. Copy this directory and run the unattended phases:
+
+   ```sh
+   IP=<public-ip>
+   tar czf - server | ssh root@$IP 'mkdir -p /root/agent-station && tar xzf - -C /root/agent-station'
+   ssh root@$IP 'bash /root/agent-station/server/bootstrap.sh kemal base user'
+   ssh kemal@$IP true   # user login works
+   ```
+
+3. Tailscale. The phase prints a login URL and waits until you approve it:
+
+   ```sh
+   ssh root@$IP 'bash /root/agent-station/server/bootstrap.sh kemal tailscale'
+   ```
+
+   If the old node "monday" still exists in the tailnet, remove it in the admin console first,
+   or the new one gets a suffixed name. Then from the Mac (Tailscale running):
+
+   ```sh
+   ssh kemal@monday true
+   ```
+
+4. Only after step 3 works, harden SSH and enable the firewall. Run it over Tailscale:
+
+   ```sh
+   ssh kemal@monday 'sudo CONFIRMED_TAILSCALE_LOGIN=yes bash /root/agent-station/server/bootstrap.sh kemal harden'
+   nc -vz -w 5 $IP 22    # must fail (filtered)
+   ssh kemal@monday true # must still work
+   ```
+
+5. Userland, Hermes and persona:
+
+   ```sh
+   ssh kemal@monday 'sudo bash /root/agent-station/server/bootstrap.sh kemal userland hermes persona'
+   ```
+
+6. Secrets, in your own SSH session (never through scripts or chat):
+
+   ```sh
+   ssh kemal@monday
+   hermes model           # provider + model + API key
+   hermes gateway setup   # Telegram bot token, TELEGRAM_ALLOWED_USERS=<your Telegram user ID>
+   stat -c '%a' ~/.hermes/.env   # must be 600
+   ```
+
+   Claude Code: run `claude` once and log in.
+
+   Notes from the first install:
+   - `hermes model` opens with Nous Portal preselected; move with the arrow keys before Enter.
+   - The "Automatic" Telegram option creates the bot through Nous's hosted onboarding bot,
+     so the token passes through their service. "Manual" (token from @BotFather) avoids that.
+   - "Additional allowed user IDs" takes IDs, not y/n. Leave it empty. Check with
+     `grep '^TELEGRAM_ALLOWED_USERS' ~/.hermes/.env` (prints only that line).
+   - The wizard may install and start the gateway service itself. That is fine; the
+     `service` phase then only adds linger (`--if-missing`).
+
+7. Gateway service, then reboot and check:
+
+   ```sh
+   ssh kemal@monday 'sudo bash /root/agent-station/server/bootstrap.sh kemal service'
+   ssh kemal@monday 'sudo reboot'
+   ssh kemal@monday 'systemctl --user status "hermes*"'
+   ```
+
+   Send Monday a Telegram message to confirm it answers.
+
+Restoring state (sessions, memories, `.env`) from backup is not covered yet (see open items).
+
+## What bootstrap.sh changes
+
+| Phase | Changes |
+|---|---|
+| base | `apt full-upgrade`; packages: git curl jq tmux htop ufw restic build-essential ca-certificates sudo unattended-upgrades unzip libatomic1 gnupg; unattended-upgrades security only, no auto reboot (`/etc/apt/apt.conf.d/20auto-upgrades`, `51unattended-upgrades-local`); hostname `monday` (+ cloud-init `preserve_hostname: true`); timezone UTC; 2 GB `/swapfile`, `vm.swappiness=10` |
+| user | user with group sudo, password-less sudo in `/etc/sudoers.d/90-<user>`, root's authorized_keys copied |
+| tailscale | official apt repo `pkgs.tailscale.com`, `tailscale up --hostname=monday` |
+| harden | `/etc/ssh/sshd_config.d/00-agent-station.conf` (PasswordAuthentication no, KbdInteractiveAuthentication no, PermitRootLogin no); ufw default deny incoming, allow in on tailscale0, allow 41641/udp |
+| userland | fnm in `~/.local/share/fnm`, Node LTS as default, `.bashrc` block; Claude Code via `claude.ai/install.sh` (not logged in) |
+| hermes | Hermes Agent via `hermes-agent.nousresearch.com/install.sh` into `~/.hermes` (no setup; no secrets) |
+| persona | `~/.hermes/SOUL.md` (default kept as `SOUL.md.default`), `~/.hermes/skins/monday.yaml`, `display.skin: monday` |
+| service | `loginctl enable-linger <user>`; `hermes gateway install` (systemd user unit, starts at boot) |
+
+Override defaults with `SERVER_HOSTNAME`, `SERVER_TIMEZONE`, `SWAP_SIZE`.
+
+## Known risks and notes
+
+- **Password-less sudo.** `kemal` has `NOPASSWD:ALL`, and Hermes runs as `kemal` and can run
+  shell commands. A prompt injection reaching Monday (a web page it reads, a forwarded message)
+  can therefore reach root. `TELEGRAM_ALLOWED_USERS` limits who can talk to the bot, not what
+  content it reads. Decide before adding backups or more credentials: either put a password on
+  sudo (remove `/etc/sudoers.d/90-kemal`, set a password) or run Hermes as a separate user
+  without sudo.
+- With ufw `deny`, public port 22 is dropped, so a test shows a timeout rather than "connection refused".
+- SSH over the public IP is closed after `harden`. Access is via Tailscale only; the provider's
+  web console is the fallback.
+- Hermes's optional `cua-driver` (computer use) does not install on a headless server (needs libX11).
+  Not needed here.
+
+## Open items
+
+- restic backups of `~/.hermes` and home to Cloudflare R2.
+- Connection from Monster (`keel-remote` forced command).
+- Hetzner Cloud Firewall as a second layer in front of ufw.
