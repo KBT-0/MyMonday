@@ -21,15 +21,15 @@ Nothing in `bootstrap.sh` is arm64-specific; it also runs on x86_64 Debian 13.
 
    ```sh
    IP=<public-ip>
-   tar czf - server | ssh root@$IP 'mkdir -p /root/agent-station && tar xzf - -C /root/agent-station'
-   ssh root@$IP 'bash /root/agent-station/server/bootstrap.sh kemal base user'
+   tar czf - server | ssh root@$IP 'mkdir -p /root/MyMonday && tar xzf - -C /root/MyMonday'
+   ssh root@$IP 'bash /root/MyMonday/server/bootstrap.sh kemal base user'
    ssh kemal@$IP true   # user login works
    ```
 
 3. Tailscale. The phase prints a login URL and waits until you approve it:
 
    ```sh
-   ssh root@$IP 'bash /root/agent-station/server/bootstrap.sh kemal tailscale'
+   ssh root@$IP 'bash /root/MyMonday/server/bootstrap.sh kemal tailscale'
    ```
 
    If the old node "monday" still exists in the tailnet, remove it in the admin console first,
@@ -42,7 +42,7 @@ Nothing in `bootstrap.sh` is arm64-specific; it also runs on x86_64 Debian 13.
 4. Only after step 3 works, harden SSH and enable the firewall. Run it over Tailscale:
 
    ```sh
-   ssh kemal@monday 'sudo CONFIRMED_TAILSCALE_LOGIN=yes bash /root/agent-station/server/bootstrap.sh kemal harden'
+   ssh kemal@monday 'sudo CONFIRMED_TAILSCALE_LOGIN=yes bash /root/MyMonday/server/bootstrap.sh kemal harden'
    nc -vz -w 5 $IP 22    # must fail (filtered)
    ssh kemal@monday true # must still work
    ```
@@ -50,7 +50,7 @@ Nothing in `bootstrap.sh` is arm64-specific; it also runs on x86_64 Debian 13.
 5. Userland, Hermes and persona:
 
    ```sh
-   ssh kemal@monday 'sudo bash /root/agent-station/server/bootstrap.sh kemal userland hermes persona'
+   ssh kemal@monday 'sudo bash /root/MyMonday/server/bootstrap.sh kemal userland hermes persona'
    ```
 
 6. Secrets, in your own SSH session (never through scripts or chat):
@@ -76,7 +76,7 @@ Nothing in `bootstrap.sh` is arm64-specific; it also runs on x86_64 Debian 13.
 7. Model routing (after `hermes model` stored the Anthropic keys):
 
    ```sh
-   ssh kemal@monday 'sudo bash /root/agent-station/server/bootstrap.sh kemal routing'
+   ssh kemal@monday 'sudo bash /root/MyMonday/server/bootstrap.sh kemal routing'
    ```
 
    Opus 5.5 is the main model and does the work. Through the official `advanced-delegation`
@@ -88,7 +88,7 @@ Nothing in `bootstrap.sh` is arm64-specific; it also runs on x86_64 Debian 13.
 8. Gateway service, then reboot and check:
 
    ```sh
-   ssh kemal@monday 'sudo bash /root/agent-station/server/bootstrap.sh kemal service'
+   ssh kemal@monday 'sudo bash /root/MyMonday/server/bootstrap.sh kemal service'
    ssh kemal@monday 'sudo reboot'
    ssh kemal@monday 'systemctl --user status "hermes*"'
    ```
@@ -104,7 +104,7 @@ Restoring state (sessions, memories, `.env`) from backup is not covered yet (see
 | base | `apt full-upgrade`; packages: git curl jq tmux htop ufw restic build-essential ca-certificates sudo unattended-upgrades unzip libatomic1 gnupg; unattended-upgrades security only, no auto reboot (`/etc/apt/apt.conf.d/20auto-upgrades`, `51unattended-upgrades-local`); hostname `monday` (+ cloud-init `preserve_hostname: true`); timezone Europe/Istanbul; 2 GB `/swapfile`, `vm.swappiness=10` |
 | user | user with group sudo, password-less sudo in `/etc/sudoers.d/90-<user>`, root's authorized_keys copied |
 | tailscale | official apt repo `pkgs.tailscale.com`, `tailscale up --hostname=monday` |
-| harden | `/etc/ssh/sshd_config.d/00-agent-station.conf` (PasswordAuthentication no, KbdInteractiveAuthentication no, PermitRootLogin no); ufw default deny incoming, allow in on tailscale0, allow 41641/udp |
+| harden | `/etc/ssh/sshd_config.d/00-mymonday.conf` (PasswordAuthentication no, KbdInteractiveAuthentication no, PermitRootLogin no); ufw default deny incoming, allow in on tailscale0, allow 41641/udp |
 | userland | fnm in `~/.local/share/fnm`, Node LTS as default, `.bashrc` block; Claude Code via `claude.ai/install.sh` (not logged in) |
 | hermes | Hermes Agent via `hermes-agent.nousresearch.com/install.sh` into `~/.hermes` (no setup; no secrets) |
 | persona | `~/.hermes/SOUL.md` (default kept as `SOUL.md.default`), `~/.hermes/skins/monday.yaml`, `display.skin: monday` |
