@@ -68,7 +68,7 @@ APT::Periodic::Update-Package-Lists "1";
 APT::Periodic::Unattended-Upgrade "1";
 EOF
   cat > /etc/apt/apt.conf.d/51unattended-upgrades-local <<'EOF'
-// Managed by agent-station/server/bootstrap.sh
+// Managed by MyMonday/server/bootstrap.sh
 // Replace Debian's default origins (which include point releases) with security only.
 #clear Unattended-Upgrade::Origins-Pattern;
 Unattended-Upgrade::Origins-Pattern {
@@ -88,7 +88,7 @@ EOF
   fi
   if [ -d /etc/cloud/cloud.cfg.d ]; then
     # Hetzner's cloud-init ships preserve_hostname: false; keep ours across reboots.
-    printf 'preserve_hostname: true\n' > /etc/cloud/cloud.cfg.d/99-agent-station-hostname.cfg
+    printf 'preserve_hostname: true\n' > /etc/cloud/cloud.cfg.d/99-mymonday-hostname.cfg
   fi
 
   log "timezone: $SERVER_TIMEZONE"
@@ -168,8 +168,8 @@ phase_harden() {
 
   log "sshd: no passwords, no root login"
   # 00- so it wins: sshd uses the first value it reads for each option.
-  cat > /etc/ssh/sshd_config.d/00-agent-station.conf <<'EOF'
-# Managed by agent-station/server/bootstrap.sh
+  cat > /etc/ssh/sshd_config.d/00-mymonday.conf <<'EOF'
+# Managed by MyMonday/server/bootstrap.sh
 PasswordAuthentication no
 KbdInteractiveAuthentication no
 PermitRootLogin no
@@ -194,10 +194,10 @@ phase_userland() {
     if [ ! -x "$FNM_DIR/fnm" ]; then
       curl -fsSL https://fnm.vercel.app/install | bash -s -- --install-dir "$FNM_DIR" --skip-shell
     fi
-    if ! grep -q "# fnm (agent-station)" "$HOME/.bashrc"; then
+    if ! grep -q "# fnm (mymonday)" "$HOME/.bashrc"; then
       cat >> "$HOME/.bashrc" <<"EOF"
 
-# fnm (agent-station)
+# fnm (mymonday)
 export PATH="$HOME/.local/share/fnm:$PATH"
 eval "$(fnm env --use-on-cd --shell bash)"
 EOF
