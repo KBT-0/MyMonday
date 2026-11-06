@@ -22,9 +22,11 @@
 #   routing   Opus main model + delegation routes (Sonnet "light", Fable "advisor").
 #             Run after `hermes model` has stored the Anthropic key(s).
 #   service   run the Hermes gateway as AGENT_USER's service that survives reboot
+#   backup    nightly encrypted restic backup to R2 as root. Enables the timer once
+#             /etc/mymonday/restic.env (R2 credentials, entered by hand) exists.
 #
 # With no phase given, runs: base user tailscale agent userland hermes persona
-# (harden, routing and service are always explicit: they need a human step first).
+# (harden, routing, service and backup are always explicit: they need a human step first).
 #
 # Environment overrides:
 #   AGENT_USER        default: monday
@@ -341,9 +343,39 @@ phase_service() {
   '
 }
 
+phase_backup() {
+  log "backup: restic to R2, nightly timer (root only)"
+  local conf=/etc/mymonday src="$SCRIPT_DIR/backup"
+  install -m 755 "$src/mymonday-backup" /usr/local/sbin/mymonday-backup
+  install -m 644 "$src/mymonday-backup.service" "$src/mymonday-backup.timer" /etc/systemd/system/
+  install -d -m 755 /etc/systemd/system/mymonday-backup.service.d
+  printf '[Service]\nEnvironment=ADMIN_USER=%s AGENT_USER=%s PROJECTS_DIR=%s\n' \
+    "$USERNAME" "$AGENT_USER" "$PROJECTS_DIR" > /etc/systemd/system/mymonday-backup.service.d/users.conf
+  systemctl daemon-reload
+  install -d -m 700 "$conf" /var/cache/restic
+
+  # Repository password: generated here, never printed. The operator copies it to a
+  # password manager with `sudo cat /etc/mymonday/restic.pass` in their own terminal.
+  if [ ! -s "$conf/restic.pass" ]; then
+    ( umask 077; head -c 32 /dev/urandom | base64 > "$conf/restic.pass" )
+    echo "generated $conf/restic.pass (save a copy in your password manager)"
+  fi
+  chmod 600 "$conf/restic.pass"
+
+  if [ ! -s "$conf/restic.env" ]; then
+    echo "missing $conf/restic.env: R2 credentials are entered by hand (server/README.md, Backups)."
+    echo "timer not enabled yet; re-run this phase after creating it."
+    return 0
+  fi
+  chmod 600 "$conf/restic.env"
+  /usr/local/sbin/mymonday-backup init
+  systemctl enable --now mymonday-backup.timer
+  systemctl list-timers mymonday-backup.timer --no-pager
+}
+
 for p in "${PHASES[@]}"; do
   case "$p" in
-    base|user|tailscale|harden|agent|userland|hermes|persona|routing|service) "phase_$p" ;;
+    base|user|tailscale|harden|agent|userland|hermes|persona|routing|service|backup) "phase_$p" ;;
     *) die "unknown phase: $p" ;;
   esac
 done

@@ -1,0 +1,74 @@
+#!/usr/bin/env bash
+# Encrypted, deduplicated backup of the monday server to an S3-compatible bucket (Cloudflare R2).
+# Installed to /usr/local/sbin by `bootstrap.sh <admin> backup`, run as root by mymonday-backup.timer.
+#
+# Usage: mymonday-backup [backup|init|snapshots|check|restore [snapshot]]   (default: backup)
+#
+# Credentials live only on the server, root-owned, mode 600:
+#   /etc/mymonday/restic.env   RESTIC_REPOSITORY, AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY
+#   /etc/mymonday/restic.pass  repository password (keep a copy in a password manager)
+# Running as root keeps the assistant account from reading or deleting its own backups.
+set -euo pipefail
+
+CONF_DIR="${MYMONDAY_CONF_DIR:-/etc/mymonday}"
+ENV_FILE="$CONF_DIR/restic.env"
+export RESTIC_PASSWORD_FILE="$CONF_DIR/restic.pass"
+export RESTIC_CACHE_DIR="${RESTIC_CACHE_DIR:-/var/cache/restic}"
+
+die() { printf 'mymonday-backup: %s\n' "$*" >&2; exit 1; }
+[ "$(id -u)" -eq 0 ] || die "run as root"
+for f in "$ENV_FILE" "$RESTIC_PASSWORD_FILE"; do
+  [ -s "$f" ] || die "missing $f (see server/README.md, Backups)"
+  [ "$(stat -c %a "$f")" = 600 ] || die "$f must be mode 600"
+done
+set -a
+# shellcheck source=/dev/null
+. "$ENV_FILE"
+set +a
+: "${RESTIC_REPOSITORY:?RESTIC_REPOSITORY not set in $ENV_FILE}"
+
+AGENT_HOME="$(getent passwd "${AGENT_USER:-monday}" | cut -d: -f6)"
+ADMIN_HOME="$(getent passwd "${ADMIN_USER:-kemal}" | cut -d: -f6)"
+PROJECTS_DIR="${PROJECTS_DIR:-/srv/projects}"
+
+# What to keep. Installs and caches are rebuilt by bootstrap.sh, so they are left out.
+PATHS=("$AGENT_HOME" "$ADMIN_HOME" "$PROJECTS_DIR")
+EXCLUDES=(
+  "$AGENT_HOME/.hermes/hermes-agent" "$AGENT_HOME/.hermes/tools" "$AGENT_HOME/.hermes/installs"
+  "$AGENT_HOME/.hermes/cache" "$AGENT_HOME/.hermes/logs"
+  "*/.cache" "*/.npm" "*/.local/share/fnm" "*/.local/share/claude" "*/.local/state"
+  "*/node_modules" "*/.venv" "*/__pycache__" "*/target" "*/.next" "*/dist" "*/build"
+)
+
+repo_exists() { restic cat config >/dev/null 2>&1; }
+
+cmd_init() {
+  if repo_exists; then echo "repository already initialized"; else restic init; fi
+}
+
+cmd_backup() {
+  repo_exists || die "repository not initialized; run: mymonday-backup init"
+  local args=() p
+  for p in "${EXCLUDES[@]}"; do args+=(--exclude "$p"); done
+  restic backup --one-file-system --exclude-caches --tag mymonday "${args[@]}" "${PATHS[@]}"
+  restic forget --tag mymonday --keep-daily 7 --keep-weekly 4 --keep-monthly 6 --prune
+  # Weekly integrity check that also reads a sample of the stored data.
+  if [ "$(date +%u)" = 7 ]; then restic check --read-data-subset=5%; fi
+}
+
+# Restore the backed-up paths in place (owners and modes come back with them).
+# Stop the gateway first: sudo -u monday XDG_RUNTIME_DIR=/run/user/$(id -u monday) systemctl --user stop hermes-gateway
+cmd_restore() {
+  local snapshot="${1:-latest}" args=() p
+  for p in "${PATHS[@]}"; do args+=(--include "$p"); done
+  restic restore "$snapshot" --target / "${args[@]}"
+}
+
+case "${1:-backup}" in
+  backup) cmd_backup ;;
+  init) cmd_init ;;
+  restore) cmd_restore "${2:-latest}" ;;
+  snapshots) restic snapshots ;;
+  check) restic check ;;
+  *) die "unknown command: $1" ;;
+esac
