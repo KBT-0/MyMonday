@@ -1,0 +1,12 @@
+[Unit]
+Description=MyMonday encrypted backup (restic to R2)
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/mymonday-backup backup
+Nice=10
+IOSchedulingClass=idle
+# Keep the gateway responsive on a 4 GB machine.
+MemoryHigh=1G

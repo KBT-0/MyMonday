@@ -44,6 +44,7 @@ flowchart LR
 | `persona` | Monday's identity (`SOUL.md`) and CLI branding |
 | `routing` | Opus as main model, Sonnet and Fable as delegation routes |
 | `service` | Gateway as a systemd user service that survives reboots |
+| `backup` | Nightly encrypted restic backup to Cloudflare R2, as root |
 
 The step-by-step rebuild guide, including the manual steps, is in [`server/README.md`](server/README.md).
 
@@ -99,8 +100,8 @@ inherit the parent's tools. That trade-off is documented rather than hidden.
 ## Roadmap
 
 - [x] Run Hermes as a dedicated user without sudo
-- [ ] Encrypted restic backups of `~/.hermes` and home to Cloudflare R2
-- [ ] Restore path for those backups in the rebuild guide
+- [x] Encrypted restic backups to Cloudflare R2, root-only, with a documented restore path
+- [ ] First backup run against the real R2 bucket
 - [ ] Restricted SSH entry for a second machine (forced command)
 - [ ] Hetzner Cloud Firewall as a second layer in front of ufw
 
@@ -114,6 +115,9 @@ server/
     SOUL.md               Monday's identity and voice
     model_map.json        delegation routes (light, advisor)
     skins/monday.yaml     CLI branding
+  backup/
+    mymonday-backup       restic backup / restore wrapper (root only)
+    mymonday-backup.*     systemd service + nightly timer
 .github/workflows/
   shellcheck.yml          lint on every push
 ```
