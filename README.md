@@ -17,13 +17,14 @@ flowchart LR
     phone["Telegram<br/>(phone, Mac)"] -->|"bot API, allowlisted user"| gw
 
     subgraph monday["monday · Debian 13 · Hetzner CAX11 (arm64)"]
-        gw["Hermes gateway<br/>systemd user unit + linger"] --> opus["Opus 5.5<br/>main model, does the work"]
+        gw["Hermes gateway<br/>user 'monday', no sudo"] --> opus["Opus 5.5<br/>main model, does the work"]
         opus -->|"delegate: light"| sonnet["Sonnet 5.5<br/>routine bulk subtasks"]
         opus -->|"delegate: advisor"| fable["Fable 5.1<br/>advice only"]
         opus --> tools["tools: shell, files, web,<br/>Claude Code, Node"]
+        tools --> projects[("/srv/projects<br/>shared with operator")]
     end
 
-    mac["Mac"] -->|"SSH over Tailscale only"| monday
+    mac["Mac"] -->|"SSH over Tailscale only<br/>operator 'kemal', sudo"| monday
     internet(("public internet")) -.->|"ufw: everything dropped<br/>except 41641/udp"| monday
 ```
 
@@ -34,10 +35,11 @@ flowchart LR
 | Phase | Result |
 |---|---|
 | `base` | Full upgrade, base packages, security-only unattended upgrades (no auto reboot), hostname, timezone, 2 GB swap with `vm.swappiness=10` |
-| `user` | Non-root user with sudo and the root SSH keys |
+| `user` | Operator account with sudo and the root SSH keys |
 | `tailscale` | Tailscale from the official apt repo, interactive `tailscale up` |
 | `harden` | sshd: no passwords, no root. ufw: deny incoming, allow `tailscale0` and WireGuard `41641/udp` |
-| `userland` | Node LTS via fnm, Claude Code |
+| `agent` | Unprivileged `monday` account for the assistant; shared `/srv/projects` with a default ACL |
+| `userland` | Node LTS via fnm, Claude Code, for both accounts |
 | `hermes` | Hermes Agent, installed with its official installer (read before running) |
 | `persona` | Monday's identity (`SOUL.md`) and CLI branding |
 | `routing` | Opus as main model, Sonnet and Fable as delegation routes |
@@ -55,6 +57,11 @@ is idempotent. Nothing in it is architecture-specific.
 operator confirms a working Tailscale login (`CONFIRMED_TAILSCALE_LOGIN=yes`). The sshd drop-in is
 checked with `sshd -t` before reload. The sshd drop-in is named `00-…` because sshd keeps the
 first value it reads, and cloud images ship their own drop-ins.
+
+**The assistant has no root.** Monday runs as its own `monday` account: no sudo, locked password,
+no SSH keys, and no access to the operator's home. Projects live in a shared directory with a
+default ACL so both accounts can work on them. When root is needed, Monday hands the operator
+the command. A prompt injection can only act with the rights of that one account.
 
 **Secrets never touch the repo, the logs or the automation.** API keys and the bot token are typed
 by the owner into Hermes's own prompts in an SSH session. They live in `~/.hermes/.env` and
@@ -84,14 +91,14 @@ inherit the parent's tools. That trade-off is documented rather than hidden.
 
 ## Known risks
 
-- The assistant runs as a user with password-less sudo, and it can run shell commands. A prompt
-  injection in content it reads could therefore reach root. The Telegram allowlist limits who can
-  talk to it, not what it reads. Moving Hermes to a user without sudo is on the roadmap.
+- Monday can run shell commands as `monday`. Content it reads (web pages, forwarded messages) could
+  carry a prompt injection that acts with that account's rights: its own files, `/srv/projects`, and
+  its API keys. The Telegram allowlist limits who can talk to it, not what it reads.
 - Port 22 on the public IP is closed; the provider's web console is the break-glass path.
 
 ## Roadmap
 
-- [ ] Run Hermes as a dedicated user without sudo
+- [x] Run Hermes as a dedicated user without sudo
 - [ ] Encrypted restic backups of `~/.hermes` and home to Cloudflare R2
 - [ ] Restore path for those backups in the rebuild guide
 - [ ] Restricted SSH entry for a second machine (forced command)
