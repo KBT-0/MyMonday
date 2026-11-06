@@ -133,7 +133,19 @@ packages; for root work it gives the operator the command.
     ```
 
     If the password does not work, wait 10 minutes: password-less sudo comes back by itself.
-    After lockdown, every later phase is run by the operator with `ssh -t` (sudo asks for the password).
+
+## Changes after lockdown
+
+The operator keeps a clone of this repo on the server, pulls changes without sudo, and runs
+the affected phase with sudo (it asks for the password):
+
+```sh
+ssh kemal@monday 'git clone https://github.com/KBT-0/MyMonday.git ~/MyMonday'   # once
+ssh kemal@monday 'git -C ~/MyMonday pull --ff-only'
+ssh -t kemal@monday 'sudo bash ~/MyMonday/server/bootstrap.sh kemal persona'    # e.g. after a SOUL.md change
+```
+
+Persona changes apply to new sessions: send `/new` to Monday afterwards.
 
 ## Backups
 
