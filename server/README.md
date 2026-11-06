@@ -11,6 +11,7 @@ Nothing in `bootstrap.sh` is arm64-specific; it also runs on x86_64 Debian 13.
 - `bootstrap.sh` - every system change, split into idempotent phases. Run as root.
 - `hermes/SOUL.md` - Monday's identity and voice (installed to `~/.hermes/SOUL.md`).
 - `hermes/skins/monday.yaml` - CLI branding, agent name "Monday" (`display.skin: monday`).
+- `hermes/model_map.json` - delegation routes `light` (Sonnet) and `advisor` (Fable), see the `routing` phase.
 
 ## Rebuild from zero
 
