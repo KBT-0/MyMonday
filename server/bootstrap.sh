@@ -24,10 +24,18 @@
 #   SERVER_HOSTNAME   default: monday
 #   SERVER_TIMEZONE   default: Europe/Istanbul
 #   SWAP_SIZE         default: 2G
+#
+# shellcheck disable=SC2016  # as_user bodies are single-quoted on purpose: they expand
+#                            # in the target user's shell ($HOME, $PATH), not root's.
 set -euo pipefail
 
-USERNAME="${1:-}"
-[ -n "$USERNAME" ] || { echo "usage: $0 <username> [phase ...]" >&2; exit 2; }
+usage() { sed -n '2,/^# shellcheck/{/^# shellcheck/d;s/^# \{0,1\}//;p;}' "$0"; }
+case "${1:-}" in
+  -h|--help) usage; exit 0 ;;
+  "") usage >&2; exit 2 ;;
+esac
+
+USERNAME="$1"
 shift
 PHASES=("$@")
 [ ${#PHASES[@]} -gt 0 ] || PHASES=(base user tailscale userland hermes persona)
@@ -139,6 +147,7 @@ tailscale_running() {
 
 phase_tailscale() {
   log "tailscale (official apt repo)"
+  # shellcheck source=/dev/null
   . /etc/os-release
   local base="https://pkgs.tailscale.com/stable/debian"
   if [ ! -f /usr/share/keyrings/tailscale-archive-keyring.gpg ]; then
