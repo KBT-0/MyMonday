@@ -2,25 +2,33 @@
 # Bootstrap the "monday" server (Debian 13). Idempotent: safe to re-run.
 #
 # Usage (as root on the server):
-#   bash bootstrap.sh <username> [phase ...]
+#   bash bootstrap.sh <admin-user> [phase ...]
+#
+# Two accounts: <admin-user> is the human operator (SSH, sudo). The assistant runs
+# as AGENT_USER, which has no sudo and no SSH keys, so a prompt injection that
+# reaches the assistant's shell does not reach root.
 #
 # Phases, in order:
 #   base      apt upgrade, packages, unattended-upgrades, hostname, timezone, swap
-#   user      create <username> with sudo and root's SSH keys
+#   user      create <admin-user> with sudo and root's SSH keys
 #   tailscale install Tailscale from the official repo and run `tailscale up`
 #   harden    sshd drop-in (no passwords, no root) + ufw. Refuses to run unless
 #             Tailscale is up and CONFIRMED_TAILSCALE_LOGIN=yes is set.
-#   userland  fnm + Node LTS + Claude Code for <username>
-#   hermes    Hermes Agent for <username>
-#   persona   install the Monday persona (SOUL.md) for <username>
+#   agent     create AGENT_USER: no sudo, no SSH login, systemd linger;
+#             shared PROJECTS_DIR (setgid + default ACL) for both users
+#   userland  fnm + Node LTS + Claude Code for <admin-user> and AGENT_USER
+#   hermes    Hermes Agent for AGENT_USER
+#   persona   install the Monday persona (SOUL.md) for AGENT_USER
 #   routing   Opus main model + delegation routes (Sonnet "light", Fable "advisor").
 #             Run after `hermes model` has stored the Anthropic key(s).
-#   service   run the Hermes gateway as a service that survives reboot
+#   service   run the Hermes gateway as AGENT_USER's service that survives reboot
 #
-# With no phase given, runs: base user tailscale userland hermes persona
+# With no phase given, runs: base user tailscale agent userland hermes persona
 # (harden, routing and service are always explicit: they need a human step first).
 #
 # Environment overrides:
+#   AGENT_USER        default: monday
+#   PROJECTS_DIR      default: /srv/projects   (group PROJECTS_GROUP, default: projects)
 #   SERVER_HOSTNAME   default: monday
 #   SERVER_TIMEZONE   default: UTC
 #   SWAP_SIZE         default: 2G
@@ -38,8 +46,12 @@ esac
 USERNAME="$1"
 shift
 PHASES=("$@")
-[ ${#PHASES[@]} -gt 0 ] || PHASES=(base user tailscale userland hermes persona)
+[ ${#PHASES[@]} -gt 0 ] || PHASES=(base user tailscale agent userland hermes persona)
 
+AGENT_USER="${AGENT_USER:-monday}"
+PROJECTS_DIR="${PROJECTS_DIR:-/srv/projects}"
+PROJECTS_GROUP="${PROJECTS_GROUP:-projects}"
+[ "$AGENT_USER" != "$USERNAME" ] || { echo "AGENT_USER must differ from <admin-user>" >&2; exit 2; }
 SERVER_HOSTNAME="${SERVER_HOSTNAME:-monday}"
 SERVER_TIMEZONE="${SERVER_TIMEZONE:-UTC}"
 SWAP_SIZE="${SWAP_SIZE:-2G}"
@@ -52,13 +64,18 @@ log() { printf '\n==> %s\n' "$*"; }
 die() { printf 'ERROR: %s\n' "$*" >&2; exit 1; }
 [ "$(id -u)" -eq 0 ] || die "run as root"
 
-# Run a command as the target user in a login shell (HOME, PATH from profile).
+home_of() { getent passwd "$1" | cut -d: -f6; }
+
+# as_user <user> <script>: run <script> as <user> in a clean login shell.
 as_user() {
-  local home; home="$(getent passwd "$USERNAME" | cut -d: -f6)"
-  ( cd "$home" && runuser -u "$USERNAME" -- env -i HOME="$home" USER="$USERNAME" LOGNAME="$USERNAME" \
+  local user="$1" home; home="$(home_of "$1")"
+  ( cd "$home" && runuser -u "$user" -- env -i HOME="$home" USER="$user" LOGNAME="$user" \
       SHELL=/bin/bash LANG=C.UTF-8 PATH=/usr/local/bin:/usr/bin:/bin \
-      XDG_RUNTIME_DIR="/run/user/$(id -u "$USERNAME")" bash -lc "$1" )
+      XDG_RUNTIME_DIR="/run/user/$(id -u "$user")" bash -lc "$2" )
 }
+
+# as_agent <script>: as_user for AGENT_USER.
+as_agent() { as_user "$AGENT_USER" "$1"; }
 
 phase_base() {
   log "apt full-upgrade"
@@ -68,7 +85,7 @@ phase_base() {
   log "packages"
   apt-get "${APT_OPTS[@]}" install \
     git curl jq tmux htop ufw restic build-essential ca-certificates \
-    sudo unattended-upgrades unzip libatomic1 gnupg
+    sudo unattended-upgrades unzip libatomic1 gnupg acl
 
   log "unattended-upgrades: security only, no automatic reboot"
   cat > /etc/apt/apt.conf.d/20auto-upgrades <<'EOF'
@@ -120,7 +137,7 @@ phase_user() {
     useradd --create-home --shell /bin/bash --groups sudo "$USERNAME"
   fi
   usermod -aG sudo "$USERNAME"
-  # Password-less sudo (see README: revisit before giving the agent more reach).
+  # Password-less sudo for the human operator only; the assistant runs as AGENT_USER.
   local sudoers="/etc/sudoers.d/90-$USERNAME"
   echo "$USERNAME ALL=(ALL) NOPASSWD:ALL" > "$sudoers.tmp"
   chmod 440 "$sudoers.tmp"
@@ -195,9 +212,33 @@ EOF
   ufw status verbose
 }
 
-phase_userland() {
-  log "fnm + Node LTS for $USERNAME"
-  as_user '
+phase_agent() {
+  log "agent user: $AGENT_USER (no sudo, no SSH login)"
+  if ! id "$AGENT_USER" >/dev/null 2>&1; then
+    useradd --create-home --shell /bin/bash "$AGENT_USER"
+  fi
+  # Make sure it never gains sudo, even if the account existed before.
+  if id -nG "$AGENT_USER" | tr ' ' '\n' | grep -qx sudo; then gpasswd -d "$AGENT_USER" sudo; fi
+  rm -f "/etc/sudoers.d/90-$AGENT_USER"
+  passwd -l "$AGENT_USER" >/dev/null   # no password login; the operator uses: sudo -iu $AGENT_USER
+  chmod 700 "$(home_of "$AGENT_USER")"
+  # Keep the user's systemd manager running without a login, for the gateway service.
+  loginctl enable-linger "$AGENT_USER"
+
+  log "shared projects: $PROJECTS_DIR (group $PROJECTS_GROUP: $USERNAME, $AGENT_USER)"
+  command -v setfacl >/dev/null || apt-get "${APT_OPTS[@]}" install acl
+  getent group "$PROJECTS_GROUP" >/dev/null || groupadd "$PROJECTS_GROUP"
+  usermod -aG "$PROJECTS_GROUP" "$USERNAME"
+  usermod -aG "$PROJECTS_GROUP" "$AGENT_USER"
+  install -d -m 2770 -o "$USERNAME" -g "$PROJECTS_GROUP" "$PROJECTS_DIR"
+  # Default ACL: whatever either user creates stays group read/write for the other one.
+  setfacl -m "g:$PROJECTS_GROUP:rwx" -d -m "g:$PROJECTS_GROUP:rwx" "$PROJECTS_DIR"
+}
+
+install_node_and_claude() {
+  local user="$1"
+  log "fnm + Node LTS for $user"
+  as_user "$user" '
     set -euo pipefail
     FNM_DIR="$HOME/.local/share/fnm"
     if [ ! -x "$FNM_DIR/fnm" ]; then
@@ -218,8 +259,8 @@ EOF
     node --version
   '
 
-  log "Claude Code for $USERNAME (not logged in)"
-  as_user '
+  log "Claude Code for $user (not logged in)"
+  as_user "$user" '
     set -euo pipefail
     if [ ! -x "$HOME/.local/bin/claude" ]; then
       curl -fsSL https://claude.ai/install.sh | bash
@@ -228,11 +269,21 @@ EOF
   '
 }
 
+phase_userland() {
+  install_node_and_claude "$USERNAME"
+  install_node_and_claude "$AGENT_USER"
+}
+
+require_agent() {
+  id "$AGENT_USER" >/dev/null 2>&1 || die "$AGENT_USER does not exist (run the agent phase)"
+}
+
 phase_hermes() {
+  require_agent
   [ "$(uname -s)-$(uname -m)" = Linux-aarch64 ] || [ "$(uname -s)-$(uname -m)" = Linux-x86_64 ] ||
     die "unsupported platform for Hermes: $(uname -s) $(uname -m)"
-  log "Hermes Agent for $USERNAME"
-  as_user '
+  log "Hermes Agent for $AGENT_USER"
+  as_agent '
     set -euo pipefail
     if [ ! -d "$HOME/.hermes/hermes-agent/.git" ]; then
       # No terminal here, so the installer skips its interactive setup/gateway stages.
@@ -244,25 +295,27 @@ phase_hermes() {
 }
 
 phase_persona() {
-  log "persona: Monday (SOUL.md + skin)"
-  local home; home="$(getent passwd "$USERNAME" | cut -d: -f6)"
-  local hh="$home/.hermes" src="$SCRIPT_DIR/hermes"
-  [ -d "$hh" ] || die "Hermes is not installed for $USERNAME (run the hermes phase)"
+  require_agent
+  log "persona: Monday (SOUL.md + skin) for $AGENT_USER"
+  local hh src="$SCRIPT_DIR/hermes"
+  hh="$(home_of "$AGENT_USER")/.hermes"
+  [ -d "$hh" ] || die "Hermes is not installed for $AGENT_USER (run the hermes phase)"
   # Keep Hermes's seeded default once, for reference.
   if [ -f "$hh/SOUL.md" ] && [ ! -f "$hh/SOUL.md.default" ]; then
     cp -p "$hh/SOUL.md" "$hh/SOUL.md.default"
   fi
-  install -m 600 -o "$USERNAME" -g "$USERNAME" "$src/SOUL.md" "$hh/SOUL.md"
-  install -d -m 700 -o "$USERNAME" -g "$USERNAME" "$hh/skins"
-  install -m 644 -o "$USERNAME" -g "$USERNAME" "$src/skins/monday.yaml" "$hh/skins/monday.yaml"
-  as_user '"$HOME/.local/bin/hermes" config set display.skin monday'
+  install -m 600 -o "$AGENT_USER" -g "$AGENT_USER" "$src/SOUL.md" "$hh/SOUL.md"
+  install -d -m 700 -o "$AGENT_USER" -g "$AGENT_USER" "$hh/skins"
+  install -m 644 -o "$AGENT_USER" -g "$AGENT_USER" "$src/skins/monday.yaml" "$hh/skins/monday.yaml"
+  as_agent '"$HOME/.local/bin/hermes" config set display.skin monday'
 }
 
 phase_routing() {
+  require_agent
   log "models: Opus main, delegation routes light (Sonnet) and advisor (Fable)"
-  local home; home="$(getent passwd "$USERNAME" | cut -d: -f6)"
-  install -m 600 -o "$USERNAME" -g "$USERNAME" "$SCRIPT_DIR/hermes/model_map.json" "$home/.hermes/model_map.json"
-  as_user '
+  install -m 600 -o "$AGENT_USER" -g "$AGENT_USER" "$SCRIPT_DIR/hermes/model_map.json" \
+    "$(home_of "$AGENT_USER")/.hermes/model_map.json"
+  as_agent '
     set -euo pipefail
     h="$HOME/.local/bin/hermes"
     [ -d "$HOME/.hermes/plugins/advanced-delegation" ] || "$h" plugins install advanced-delegation
@@ -275,12 +328,13 @@ phase_routing() {
 }
 
 phase_service() {
-  log "gateway service (systemd user unit + linger)"
-  loginctl enable-linger "$USERNAME"
+  require_agent
+  log "gateway service for $AGENT_USER (systemd user unit + linger)"
+  loginctl enable-linger "$AGENT_USER"
   # Wait for the user's systemd manager that linger starts.
-  local uid; uid="$(id -u "$USERNAME")"
+  local uid; uid="$(id -u "$AGENT_USER")"
   for _ in $(seq 1 20); do [ -S "/run/user/$uid/bus" ] && break; sleep 1; done
-  as_user '
+  as_agent '
     set -euo pipefail
     "$HOME/.local/bin/hermes" gateway install --if-missing --start-on-login --start-now
     systemctl --user --no-pager list-units "*hermes*" --all
@@ -289,7 +343,7 @@ phase_service() {
 
 for p in "${PHASES[@]}"; do
   case "$p" in
-    base|user|tailscale|harden|userland|hermes|persona|routing|service) "phase_$p" ;;
+    base|user|tailscale|harden|agent|userland|hermes|persona|routing|service) "phase_$p" ;;
     *) die "unknown phase: $p" ;;
   esac
 done

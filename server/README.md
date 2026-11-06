@@ -6,10 +6,21 @@ plus light dev and deploy work. Heavy builds run elsewhere.
 Current host: Hetzner Cloud small ARM VPS (arm64, 2 vCPU, 4 GB RAM, 40 GB), Debian 13, EU.
 Nothing in `bootstrap.sh` is arm64-specific; it also runs on x86_64 Debian 13.
 
+## Accounts
+
+| Account | Purpose | Privileges |
+|---|---|---|
+| `kemal` | Human operator. SSH over Tailscale. | Password-less sudo. |
+| `monday` | Runs Hermes (Monday). | No sudo, locked password, no SSH keys, home `700`. Reached with `sudo -iu monday`. |
+
+Both are in the `projects` group and share `/srv/projects` (setgid, default ACL `g:projects:rwx`),
+so either can edit what the other created. Monday cannot read `/home/kemal` and cannot install
+packages; for root work it gives the operator the command.
+
 ## Files
 
-- `bootstrap.sh` - every system change, split into idempotent phases. Run as root.
-- `hermes/SOUL.md` - Monday's identity and voice (installed to `~/.hermes/SOUL.md`).
+- `bootstrap.sh` - every system change, split into idempotent phases. Run as root. `--help` lists them.
+- `hermes/SOUL.md` - Monday's identity and voice (installed to `~monday/.hermes/SOUL.md`).
 - `hermes/skins/monday.yaml` - CLI branding, agent name "Monday" (`display.skin: monday`).
 - `hermes/model_map.json` - delegation routes `light` (Sonnet) and `advisor` (Fable), see the `routing` phase.
 
@@ -24,7 +35,7 @@ Nothing in `bootstrap.sh` is arm64-specific; it also runs on x86_64 Debian 13.
    IP=<public-ip>
    tar czf - server | ssh root@$IP 'mkdir -p /root/MyMonday && tar xzf - -C /root/MyMonday'
    ssh root@$IP 'bash /root/MyMonday/server/bootstrap.sh kemal base user'
-   ssh kemal@$IP true   # user login works
+   ssh kemal@$IP true   # operator login works
    ```
 
 3. Tailscale. The phase prints a login URL and waits until you approve it:
@@ -48,22 +59,21 @@ Nothing in `bootstrap.sh` is arm64-specific; it also runs on x86_64 Debian 13.
    ssh kemal@monday true # must still work
    ```
 
-5. Userland, Hermes and persona:
+5. Agent user, userland, Hermes and persona:
 
    ```sh
-   ssh kemal@monday 'sudo bash /root/MyMonday/server/bootstrap.sh kemal userland hermes persona'
+   ssh kemal@monday 'sudo bash /root/MyMonday/server/bootstrap.sh kemal agent userland hermes persona'
    ```
 
-6. Secrets, in your own SSH session (never through scripts or chat):
+6. Secrets, typed by hand in your own SSH session (never through scripts or chat):
 
    ```sh
    ssh kemal@monday
-   hermes model           # provider + model + API key
+   sudo -iu monday
+   hermes model           # provider Anthropic + API key(s)
    hermes gateway setup   # Telegram bot token, TELEGRAM_ALLOWED_USERS=<your Telegram user ID>
-   stat -c '%a' ~/.hermes/.env   # must be 600
+   stat -c '%a' ~/.hermes/.env ~/.hermes/auth.json   # must be 600
    ```
-
-   Claude Code: run `claude` once and log in.
 
    Notes from the first install:
    - `hermes model` opens with Nous Portal preselected; move with the arrow keys before Enter.
@@ -72,7 +82,9 @@ Nothing in `bootstrap.sh` is arm64-specific; it also runs on x86_64 Debian 13.
    - "Additional allowed user IDs" takes IDs, not y/n. Leave it empty. Check with
      `grep '^TELEGRAM_ALLOWED_USERS' ~/.hermes/.env` (prints only that line).
    - The wizard may install and start the gateway service itself. That is fine; the
-     `service` phase then only adds linger (`--if-missing`).
+     `service` phase skips the install when one exists (`--if-missing`).
+
+   Claude Code: run `claude` once as `kemal` (and as `monday` if Monday should use it) and log in.
 
 7. Model routing (after `hermes model` stored the Anthropic keys):
 
@@ -91,7 +103,7 @@ Nothing in `bootstrap.sh` is arm64-specific; it also runs on x86_64 Debian 13.
    ```sh
    ssh kemal@monday 'sudo bash /root/MyMonday/server/bootstrap.sh kemal service'
    ssh kemal@monday 'sudo reboot'
-   ssh kemal@monday 'systemctl --user status "hermes*"'
+   ssh kemal@monday 'sudo -u monday XDG_RUNTIME_DIR=/run/user/$(id -u monday) systemctl --user status hermes-gateway'
    ```
 
    Send Monday a Telegram message to confirm it answers.
@@ -102,34 +114,35 @@ Restoring state (sessions, memories, `.env`) from backup is not covered yet (see
 
 | Phase | Changes |
 |---|---|
-| base | `apt full-upgrade`; packages: git curl jq tmux htop ufw restic build-essential ca-certificates sudo unattended-upgrades unzip libatomic1 gnupg; unattended-upgrades security only, no auto reboot (`/etc/apt/apt.conf.d/20auto-upgrades`, `51unattended-upgrades-local`); hostname `monday` (+ cloud-init `preserve_hostname: true`); timezone UTC; 2 GB `/swapfile`, `vm.swappiness=10` |
-| user | user with group sudo, password-less sudo in `/etc/sudoers.d/90-<user>`, root's authorized_keys copied |
+| base | `apt full-upgrade`; packages: git curl jq tmux htop ufw restic build-essential ca-certificates sudo unattended-upgrades unzip libatomic1 gnupg acl; unattended-upgrades security only, no auto reboot (`/etc/apt/apt.conf.d/20auto-upgrades`, `51unattended-upgrades-local`); hostname `monday` (+ cloud-init `preserve_hostname: true`); timezone UTC; 2 GB `/swapfile`, `vm.swappiness=10` |
+| user | operator with group sudo, password-less sudo in `/etc/sudoers.d/90-<user>`, root's authorized_keys copied |
 | tailscale | official apt repo `pkgs.tailscale.com`, `tailscale up --hostname=monday` |
 | harden | `/etc/ssh/sshd_config.d/00-mymonday.conf` (PasswordAuthentication no, KbdInteractiveAuthentication no, PermitRootLogin no); ufw default deny incoming, allow in on tailscale0, allow 41641/udp |
-| userland | fnm in `~/.local/share/fnm`, Node LTS as default, `.bashrc` block; Claude Code via `claude.ai/install.sh` (not logged in) |
-| hermes | Hermes Agent via `hermes-agent.nousresearch.com/install.sh` into `~/.hermes` (no setup; no secrets) |
+| agent | user `monday` without sudo, locked password, linger; group `projects`; `/srv/projects` (2770 + default ACL) |
+| userland | for both users: fnm in `~/.local/share/fnm`, Node LTS as default, `.bashrc` block; Claude Code via `claude.ai/install.sh` (not logged in) |
+| hermes | Hermes Agent for `monday` via `hermes-agent.nousresearch.com/install.sh` into `~/.hermes` (no setup; no secrets) |
 | persona | `~/.hermes/SOUL.md` (default kept as `SOUL.md.default`), `~/.hermes/skins/monday.yaml`, `display.skin: monday` |
 | routing | `advanced-delegation` plugin, `model.default: claude-opus-5-5`, `delegation.backend: model_map` with routes `light` (Sonnet) and `advisor` (Fable) |
-| service | `loginctl enable-linger <user>`; `hermes gateway install` (systemd user unit, starts at boot) |
+| service | `loginctl enable-linger monday`; `hermes gateway install` (systemd user unit, starts at boot) |
 
-Override defaults with `SERVER_HOSTNAME`, `SERVER_TIMEZONE`, `SWAP_SIZE`.
+Override defaults with `AGENT_USER`, `PROJECTS_DIR`, `PROJECTS_GROUP`, `SERVER_HOSTNAME`,
+`SERVER_TIMEZONE`, `SWAP_SIZE`.
 
 ## Known risks and notes
 
-- **Password-less sudo.** `kemal` has `NOPASSWD:ALL`, and Hermes runs as `kemal` and can run
-  shell commands. A prompt injection reaching Monday (a web page it reads, a forwarded message)
-  can therefore reach root. `TELEGRAM_ALLOWED_USERS` limits who can talk to the bot, not what
-  content it reads. Decide before adding backups or more credentials: either put a password on
-  sudo (remove `/etc/sudoers.d/90-kemal`, set a password) or run Hermes as a separate user
-  without sudo.
+- Monday can run shell commands as `monday`. A prompt injection in content it reads can act with
+  that user's rights: its own files, `/srv/projects`, and the API keys in its `~/.hermes`.
+  It cannot reach root or the operator's home. Keep project secrets out of `/srv/projects`.
+- `kemal` keeps password-less sudo for convenience. It is only reachable over Tailscale with
+  an SSH key.
 - With ufw `deny`, public port 22 is dropped, so a test shows a timeout rather than "connection refused".
 - SSH over the public IP is closed after `harden`. Access is via Tailscale only; the provider's
-  web console is the fallback.
+  web console is the fallback (log in as `kemal` with its console password).
 - Hermes's optional `cua-driver` (computer use) does not install on a headless server (needs libX11).
   Not needed here.
 
 ## Open items
 
-- restic backups of `~/.hermes` and home to Cloudflare R2.
-- Connection from Monster (`keel-remote` forced command).
+- restic backups of `~monday/.hermes` and `/srv/projects` to Cloudflare R2, with a restore path.
+- Restricted SSH entry for a second machine (forced command).
 - Hetzner Cloud Firewall as a second layer in front of ufw.
