@@ -13,10 +13,12 @@
 #   userland  fnm + Node LTS + Claude Code for <username>
 #   hermes    Hermes Agent for <username>
 #   persona   install the Monday persona (SOUL.md) for <username>
+#   routing   Opus main model + delegation routes (Sonnet "light", Fable "advisor").
+#             Run after `hermes model` has stored the Anthropic key(s).
 #   service   run the Hermes gateway as a service that survives reboot
 #
 # With no phase given, runs: base user tailscale userland hermes persona
-# (harden and service are always explicit: they need a human check first).
+# (harden, routing and service are always explicit: they need a human step first).
 #
 # Environment overrides:
 #   SERVER_HOSTNAME   default: monday
@@ -247,6 +249,22 @@ phase_persona() {
   as_user '"$HOME/.local/bin/hermes" config set display.skin monday'
 }
 
+phase_routing() {
+  log "models: Opus main, delegation routes light (Sonnet) and advisor (Fable)"
+  local home; home="$(getent passwd "$USERNAME" | cut -d: -f6)"
+  install -m 600 -o "$USERNAME" -g "$USERNAME" "$SCRIPT_DIR/hermes/model_map.json" "$home/.hermes/model_map.json"
+  as_user '
+    set -euo pipefail
+    h="$HOME/.local/bin/hermes"
+    [ -d "$HOME/.hermes/plugins/advanced-delegation" ] || "$h" plugins install advanced-delegation
+    "$h" plugins enable advanced-delegation
+    "$h" config set model.provider anthropic
+    "$h" config set model.default claude-opus-5-5
+    "$h" config set delegation.backends.model_map.options "$(jq -c . "$HOME/.hermes/model_map.json")"
+    "$h" config set delegation.backend model_map
+  '
+}
+
 phase_service() {
   log "gateway service (systemd user unit + linger)"
   loginctl enable-linger "$USERNAME"
@@ -262,7 +280,7 @@ phase_service() {
 
 for p in "${PHASES[@]}"; do
   case "$p" in
-    base|user|tailscale|harden|userland|hermes|persona|service) "phase_$p" ;;
+    base|user|tailscale|harden|userland|hermes|persona|routing|service) "phase_$p" ;;
     *) die "unknown phase: $p" ;;
   esac
 done
