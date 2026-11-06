@@ -73,7 +73,19 @@ Nothing in `bootstrap.sh` is arm64-specific; it also runs on x86_64 Debian 13.
    - The wizard may install and start the gateway service itself. That is fine; the
      `service` phase then only adds linger (`--if-missing`).
 
-7. Gateway service, then reboot and check:
+7. Model routing (after `hermes model` stored the Anthropic keys):
+
+   ```sh
+   ssh kemal@monday 'sudo bash /root/agent-station/server/bootstrap.sh kemal routing'
+   ```
+
+   Opus 5.5 is the main model and does the work. Through the official `advanced-delegation`
+   plugin (`delegation.backend: model_map`, routes in `hermes/model_map.json`) it can hand a
+   subagent to `light` (Sonnet 5.5, routine bulk work) or `advisor` (Fable 5.1, advice only).
+   Tasks with no option run on Opus. "Advice only" is an instruction in the route description
+   and SOUL.md, not a hard limit: subagents inherit the parent's tools.
+
+8. Gateway service, then reboot and check:
 
    ```sh
    ssh kemal@monday 'sudo bash /root/agent-station/server/bootstrap.sh kemal service'
@@ -96,6 +108,7 @@ Restoring state (sessions, memories, `.env`) from backup is not covered yet (see
 | userland | fnm in `~/.local/share/fnm`, Node LTS as default, `.bashrc` block; Claude Code via `claude.ai/install.sh` (not logged in) |
 | hermes | Hermes Agent via `hermes-agent.nousresearch.com/install.sh` into `~/.hermes` (no setup; no secrets) |
 | persona | `~/.hermes/SOUL.md` (default kept as `SOUL.md.default`), `~/.hermes/skins/monday.yaml`, `display.skin: monday` |
+| routing | `advanced-delegation` plugin, `model.default: claude-opus-5-5`, `delegation.backend: model_map` with routes `light` (Sonnet) and `advisor` (Fable) |
 | service | `loginctl enable-linger <user>`; `hermes gateway install` (systemd user unit, starts at boot) |
 
 Override defaults with `SERVER_HOSTNAME`, `SERVER_TIMEZONE`, `SWAP_SIZE`.

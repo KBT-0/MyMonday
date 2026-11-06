@@ -1,0 +1,15 @@
+[
+  {
+    "name": "light",
+    "description": "Sonnet. Routine, high-volume subtasks with a clear goal: searching, reading and summarizing files or pages, bulk simple edits, running checks. Use it to keep cost down.",
+    "provider": "anthropic",
+    "model": "claude-sonnet-5-5"
+  },
+  {
+    "name": "advisor",
+    "description": "Fable. Advice only: architecture, hard trade-offs, tricky debugging analysis, reviewing a plan or a diff. Ask it a question and give it the context; it must not edit files or run commands that change anything. You do the work yourself afterwards.",
+    "provider": "anthropic",
+    "model": "claude-fable-5-1",
+    "reasoning_effort": "high"
+  }
+]
