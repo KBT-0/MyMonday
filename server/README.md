@@ -163,7 +163,7 @@ deduplicated restic snapshot in a Cloudflare R2 bucket:
 - `~kemal`
 - `/srv/projects` (without `node_modules`, `.venv`, build output and caches)
 
-Retention: 7 daily, 4 weekly, 6 monthly. Sundays add `restic check --read-data-subset=5%`.
+Retention: 7 daily, 4 weekly, 6 monthly, 10 yearly. Sundays add `restic check --read-data-subset=5%`.
 restic also keeps the oldest snapshot while those buckets are still filling. After changing the
 excludes, drop an oversized early snapshot by hand (nothing secret is printed):
 
@@ -232,7 +232,11 @@ deletes. Each repo has a gitleaks pre-commit hook.
 
 The `memory` phase registers `brain-core` and `brain-private` as Basic Memory projects,
 reindexes them and adds Basic Memory to Hermes as the MCP server `brain` (stdio,
-`basic-memory mcp`). The repos themselves are data: they come back from the restic backup,
+`basic-memory mcp`). It also installs `brain-autocommit` (hourly user timer as `monday`): every change in
+the three repos is committed, through the gitleaks hook, so a note Monday breaks or deletes can
+always be restored from git (`git log -- <file>`, `git show <commit>:<file>`). A failed commit
+(a secret, for example) leaves the change staged and shows in
+`journalctl --user -u brain-autocommit`. The repos themselves are data: they come back from the restic backup,
 not from this script. The vault is not pushed anywhere; git history on the server plus the
 encrypted R2 backup are the copies.
 
@@ -256,7 +260,7 @@ sudo -u monday -H git -c user.name=Monday -c user.email=monday@monday.local -C b
 | hermes | Hermes Agent for `monday` via `hermes-agent.nousresearch.com/install.sh` into `~/.hermes` (no setup; no secrets) |
 | persona | `~/.hermes/SOUL.md` (default kept as `SOUL.md.default`), `~/.hermes/skins/monday.yaml`, `display.skin: monday` |
 | routing | `advanced-delegation` plugin, `model.default: claude-opus-5-5`, `delegation.backend: model_map` with routes `light` (Sonnet) and `advisor` (Fable) |
-| memory | `uv tool install basic-memory` (if missing), Basic Memory projects `brain-core` and `brain-private`, `basic-memory reindex`, Hermes MCP server `brain`, gateway restart |
+| memory | `uv tool install basic-memory` (if missing), Basic Memory projects `brain-core` and `brain-private`, `basic-memory reindex`, Hermes MCP server `brain`, gateway restart, `/usr/local/bin/brain-autocommit` + user timer `brain-autocommit.timer` |
 | service | `loginctl enable-linger monday`; `hermes gateway install` (systemd user unit, starts at boot) |
 | lockdown | removes `/etc/sudoers.d/90-<admin>` (sudo then asks for the password), marker `/etc/mymonday/sudo-password-required`, 10-minute revert timer `mymonday-sudo-revert` |
 | backup | `/usr/local/sbin/mymonday-backup`, `mymonday-backup.{service,timer}` (+ drop-in with the user names), `/etc/mymonday` (700), generated `restic.pass`; `restic init` and the timer once `restic.env` exists |

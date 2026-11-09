@@ -1,0 +1,26 @@
+#!/usr/bin/env bash
+# Commit whatever changed in the brain vault repos. Run hourly as the agent user by
+# brain-autocommit.timer, so nothing Monday writes exists only as an uncommitted file.
+# Installed root-owned to /usr/local/bin by `bootstrap.sh <admin> memory`.
+#
+# The repos' gitleaks pre-commit hook still runs: a commit that contains a secret fails,
+# the files stay on disk, and the failure shows in `journalctl --user -u brain-autocommit`.
+set -uo pipefail
+
+BRAIN="${BRAIN:-/srv/projects/brain}"
+rc=0
+for repo in brain-core brain-private brain-raw; do
+  d="$BRAIN/$repo"
+  [ -d "$d/.git" ] || continue
+  git -C "$d" add -A
+  git -C "$d" diff --cached --quiet && continue
+  n="$(git -C "$d" diff --cached --name-only | wc -l)"
+  if git -C "$d" -c user.name=Monday -c user.email=monday@monday.local \
+       commit -q -m "Auto-commit: $n file(s) changed"; then
+    echo "$repo: committed $n file(s)"
+  else
+    echo "$repo: commit failed, changes left staged" >&2
+    rc=1
+  fi
+done
+exit "$rc"

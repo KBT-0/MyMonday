@@ -61,7 +61,7 @@ cmd_backup() {
   local args=() p
   for p in "${EXCLUDES[@]}"; do args+=(--exclude "$p"); done
   restic backup --one-file-system --exclude-caches --tag mymonday "${args[@]}" "${PATHS[@]}"
-  restic forget --tag mymonday --keep-daily 7 --keep-weekly 4 --keep-monthly 6 --prune
+  restic forget --tag mymonday --keep-daily 7 --keep-weekly 4 --keep-monthly 6 --keep-yearly 10 --prune
   # Weekly integrity check that also reads a sample of the stored data.
   if [ "$(date +%u)" = 7 ]; then restic check --read-data-subset=5%; fi
 }

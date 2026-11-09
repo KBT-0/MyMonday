@@ -1,0 +1,8 @@
+[Unit]
+Description=Commit changes in the brain vault repos
+ConditionUser=monday
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/bin/brain-autocommit
+Nice=10

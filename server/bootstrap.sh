@@ -22,7 +22,8 @@
 #   routing   Opus main model + delegation routes (Sonnet "light", Fable "advisor").
 #             Run after `hermes model` has stored the Anthropic key(s).
 #   memory    Basic Memory over the brain vault (PROJECTS_DIR/brain/brain-core and
-#             brain-private), wired into Hermes as the MCP server "brain"
+#             brain-private), wired into Hermes as the MCP server "brain"; hourly
+#             auto-commit of the vault repos as AGENT_USER
 #   service   run the Hermes gateway as AGENT_USER's service that survives reboot
 #   backup    nightly encrypted restic backup to R2 as root. Enables the timer once
 #             /etc/mymonday/restic.env (R2 credentials, entered by hand) exists.
@@ -353,6 +354,15 @@ phase_memory() {
   local brain="$PROJECTS_DIR/brain"
   log "memory: Basic Memory over $brain, MCP server \"brain\" for $AGENT_USER"
   [ -d "$brain/brain-core/.git" ] || die "missing $brain/brain-core (the vault repos are restored from backup, see README)"
+  # Hourly auto-commit, so the git history (the "never lose a memory" layer) has everything.
+  # Script root-owned; units are user units limited to AGENT_USER.
+  install -m 755 "$SCRIPT_DIR/memory/brain-autocommit" /usr/local/bin/brain-autocommit
+  local u
+  install -d -m 755 /etc/systemd/user
+  for u in brain-autocommit.service brain-autocommit.timer; do
+    sed "s/^ConditionUser=.*/ConditionUser=$AGENT_USER/" "$SCRIPT_DIR/memory/$u" > "/etc/systemd/user/$u"
+    chmod 644 "/etc/systemd/user/$u"
+  done
   as_agent "BRAIN='$brain'"'
     set -euo pipefail
     export PATH="$HOME/.local/bin:$PATH"
@@ -369,6 +379,10 @@ phase_memory() {
     h="$HOME/.local/bin/hermes"
     "$h" mcp list 2>/dev/null | grep -qw brain || "$h" mcp add brain --command "$bm" --args mcp
     "$h" mcp list
+    systemctl --user daemon-reload
+    systemctl --user enable --now brain-autocommit.timer
+    systemctl --user start brain-autocommit.service || echo "first auto-commit failed: journalctl --user -u brain-autocommit" >&2
+    systemctl --user --no-pager list-timers brain-autocommit.timer
     # A running gateway only picks up new MCP servers on restart.
     if systemctl --user --quiet is-active "hermes-gateway*" 2>/dev/null; then
       systemctl --user restart "hermes-gateway*"
