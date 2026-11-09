@@ -43,7 +43,9 @@ PROJECTS_DIR="${PROJECTS_DIR:-/srv/projects}"
 PATHS=("$AGENT_HOME" "$ADMIN_HOME" "$PROJECTS_DIR")
 EXCLUDES=(
   "$AGENT_HOME/.hermes/hermes-agent" "$AGENT_HOME/.hermes/tools" "$AGENT_HOME/.hermes/installs"
-  "$AGENT_HOME/.hermes/cache" "$AGENT_HOME/.hermes/logs"
+  "$AGENT_HOME/.hermes/cache" "$AGENT_HOME/.hermes/logs" "$AGENT_HOME/.hermes/models_dev_cache.json"
+  "$AGENT_HOME/.basic-memory/fastembed_cache"   # embedding model, downloaded again on first use
+  "$AGENT_HOME/apps/*/.git"                     # upstream clones; the working tree is kept
   "*/.cache" "*/.npm" "*/.local/share/fnm" "*/.local/share/claude" "*/.local/share/uv" "*/.local/state"
   "*/node_modules" "*/.venv" "*/__pycache__" "*/target" "*/.next" "*/dist" "*/build"
 )
