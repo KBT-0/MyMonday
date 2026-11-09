@@ -1,0 +1,11 @@
+[Unit]
+Description=noVNC on 127.0.0.1:6080
+ConditionUser=monday
+After=x11vnc.service
+
+[Service]
+ExecStart=/usr/bin/websockify --web /usr/share/novnc 127.0.0.1:6080 127.0.0.1:5900
+Restart=always
+
+[Install]
+WantedBy=default.target

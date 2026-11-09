@@ -1,0 +1,15 @@
+[Unit]
+Description=Visible Chromium on :99, CDP on 127.0.0.1:9222
+ConditionUser=monday
+After=xvfb.service
+Requires=xvfb.service
+
+[Service]
+Environment=DISPLAY=:99
+# Chromium installed by Hermes; the version directory changes when Hermes updates it.
+# Sandbox stays on (unprivileged user namespaces are allowed on Debian 13).
+ExecStart=%h/.hermes/tools/chromium-1208/chrome-linux/chrome --user-data-dir=%h/browser-profile --window-size=1366,850 --window-position=0,0 --remote-debugging-port=9222 --no-first-run
+Restart=always
+
+[Install]
+WantedBy=default.target

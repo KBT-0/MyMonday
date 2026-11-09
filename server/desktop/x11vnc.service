@@ -1,0 +1,13 @@
+[Unit]
+Description=x11vnc on 127.0.0.1:5900 (view over SSH: ssh -L 6080:127.0.0.1:6080 monday)
+ConditionUser=monday
+After=xvfb.service
+Requires=xvfb.service
+
+[Service]
+# No VNC password: loopback only, and never published with tailscale serve.
+ExecStart=/usr/bin/x11vnc -display :99 -localhost -nopw -forever -shared -rfbport 5900
+Restart=always
+
+[Install]
+WantedBy=default.target

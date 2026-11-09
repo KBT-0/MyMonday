@@ -24,6 +24,8 @@
 #   memory    Basic Memory over the brain vault (PROJECTS_DIR/brain/brain-core and
 #             brain-private), wired into Hermes as the MCP server "brain"; hourly
 #             auto-commit of the vault repos as AGENT_USER
+#   desktop   visible browser for AGENT_USER: Xvfb, x11vnc + noVNC (loopback only), Chromium with
+#             CDP, and Hermes WebUI on the tailnet (tailscale serve :443). Run after `service`.
 #   service   run the Hermes gateway as AGENT_USER's service that survives reboot
 #   backup    nightly encrypted restic backup to R2 as root. Enables the timer once
 #             /etc/mymonday/restic.env (R2 credentials, entered by hand) exists.
@@ -31,7 +33,7 @@
 #             CONFIRMED_SUDO_PASSWORD=yes; restores itself in 10 min unless cancelled.
 #
 # With no phase given, runs: base user tailscale agent userland hermes persona
-# (harden, routing, memory, service, backup and lockdown are always explicit: they need a human step first).
+# (harden, routing, memory, service, desktop, backup and lockdown are always explicit: they need a human step first).
 #
 # Environment overrides:
 #   AGENT_USER        default: monday
@@ -419,6 +421,52 @@ phase_memory() {
   '
 }
 
+WEBUI_REPO=https://github.com/nesquena/hermes-webui.git
+WEBUI_COMMIT=75cc1ba813c8d320036a55a90e54aa0a170f4c46   # first clone only; Monday may update it later
+DESKTOP_UNITS=(xvfb x11vnc novnc vnc-chromium hermes-webui)
+
+phase_desktop() {
+  require_agent
+  log "desktop: Xvfb + x11vnc + noVNC + visible Chromium (loopback), Hermes WebUI (tailnet :443)"
+  apt-get "${APT_OPTS[@]}" install xvfb x11vnc novnc websockify
+  # Root-owned units in /etc/systemd/user (not in the agent's home), limited to AGENT_USER.
+  local u
+  install -d -m 755 /etc/systemd/user
+  for u in "${DESKTOP_UNITS[@]}"; do
+    sed "s/^ConditionUser=.*/ConditionUser=$AGENT_USER/" "$SCRIPT_DIR/desktop/$u.service" > "/etc/systemd/user/$u.service"
+    chmod 644 "/etc/systemd/user/$u.service"
+  done
+  as_agent "UNITS='${DESKTOP_UNITS[*]}' REPO='$WEBUI_REPO' COMMIT='$WEBUI_COMMIT'"'
+    set -euo pipefail
+    w="$HOME/apps/hermes-webui"
+    if [ ! -d "$w/.git" ]; then
+      git clone -q "$REPO" "$w"
+      git -C "$w" -c advice.detachedHead=false checkout -q "$COMMIT"
+    fi
+    # Units made by hand in ~/.config would shadow the managed ones in /etc/systemd/user.
+    for u in $UNITS; do
+      if [ -f "$HOME/.config/systemd/user/$u.service" ]; then
+        systemctl --user disable "$u.service" 2>/dev/null || true
+        rm -f "$HOME/.config/systemd/user/$u.service"
+      fi
+    done
+    systemctl --user daemon-reload
+    systemctl --user enable xvfb x11vnc novnc vnc-chromium
+    systemctl --user restart xvfb x11vnc novnc vnc-chromium
+    if [ -s "$HOME/.config/hermes-webui/env" ]; then
+      systemctl --user enable hermes-webui
+      systemctl --user restart hermes-webui
+    else
+      echo "missing ~/.config/hermes-webui/env (login settings, entered by hand): webui not started" >&2
+    fi
+    systemctl --user --no-pager --no-legend list-units $(printf "%s.service " $UNITS)
+  '
+  # Tailnet gets the webui (it has its own login), never the passwordless VNC.
+  tailscale serve --https=6080 off 2>/dev/null || true
+  tailscale serve --bg --https=443 http://127.0.0.1:8787
+  tailscale serve status
+}
+
 phase_service() {
   require_agent
   log "gateway service for $AGENT_USER (systemd user unit + linger)"
@@ -489,7 +537,7 @@ phase_backup() {
 
 for p in "${PHASES[@]}"; do
   case "$p" in
-    base|user|tailscale|harden|agent|userland|hermes|persona|routing|memory|service|backup|lockdown) "phase_$p" ;;
+    base|user|tailscale|harden|agent|userland|hermes|persona|routing|memory|service|desktop|backup|lockdown) "phase_$p" ;;
     *) die "unknown phase: $p" ;;
   esac
 done

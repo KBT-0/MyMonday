@@ -269,6 +269,7 @@ sudo -u monday -H git -c user.name=Monday -c user.email=monday@monday.local -C /
 | routing | `advanced-delegation` plugin, `model.default: claude-opus-5-5`, `delegation.backend: model_map` with routes `light` (Sonnet) and `advisor` (Fable) |
 | memory | `uv tool install basic-memory` (if missing), Basic Memory projects `brain-core`, `brain-private` and `brain-sensitive` (repo created on first run, with the gitleaks hook), `basic-memory reindex`, Hermes MCP server `brain`, gateway restart, `/usr/local/bin/brain-autocommit` + user timer `brain-autocommit.timer` |
 | service | `loginctl enable-linger monday`; `hermes gateway install` (systemd user unit, starts at boot) |
+| desktop | apt xvfb x11vnc novnc websockify; user units `xvfb`, `x11vnc`, `novnc`, `vnc-chromium`, `hermes-webui` in `/etc/systemd/user` (ConditionUser, hand-made copies in `~monday/.config/systemd/user` removed); `~monday/apps/hermes-webui` cloned at a pinned commit; `tailscale serve` :443 → webui, :6080 off |
 | lockdown | removes `/etc/sudoers.d/90-<admin>` (sudo then asks for the password), marker `/etc/mymonday/sudo-password-required`, 10-minute revert timer `mymonday-sudo-revert` |
 | backup | `/usr/local/sbin/mymonday-backup`, `mymonday-backup.{service,timer}` (+ drop-in with the user names), `/etc/mymonday` (700), generated `restic.pass`; `restic init` and the timer once `restic.env` exists |
 
@@ -291,6 +292,21 @@ hosted onboarding bot). Monday is offline from the revoke until the new token is
    ```
 
 3. Send Monday a message.
+
+## Monday's browser and WebUI
+
+The `desktop` phase gives Monday a visible Chromium on a virtual display (`:99`) with CDP on
+`127.0.0.1:9222`, and runs Hermes WebUI on `127.0.0.1:8787`, published to the tailnet with
+`tailscale serve` on :443. The WebUI has its own login; its settings are typed by hand into
+`~monday/.config/hermes-webui/env` (mode 600, see the upstream README), and the unit is only
+enabled once that file exists.
+
+The VNC view of the browser has no password, so it stays on loopback and is never served on
+the tailnet. To watch it, tunnel it over SSH and open http://127.0.0.1:6080/vnc.html:
+
+```sh
+ssh -L 6080:127.0.0.1:6080 monday
+```
 
 ## Hetzner Cloud Firewall
 
