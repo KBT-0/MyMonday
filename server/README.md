@@ -235,7 +235,8 @@ deletes. Each repo has a gitleaks pre-commit hook.
 
 Sensitive notes (`access: on_request`) live in their own repo, `brain-sensitive`, registered as a
 separate Basic Memory project (Basic Memory does not allow a project nested inside another), so
-search over `brain-core` / `brain-private` never returns them. `SOUL.md` tells Monday to open it only when the owner explicitly asks about that topic.
+search over `brain-core` / `brain-private` never returns them. This is a convention enforced by `SOUL.md`, not access
+control: the `brain` MCP server and the `monday` account can still read the repo. `SOUL.md` tells Monday to open it only when the owner explicitly asks about that topic.
 
 The `memory` phase registers `brain-core` and `brain-private` as Basic Memory projects,
 reindexes them and adds Basic Memory to Hermes as the MCP server `brain` (stdio,
