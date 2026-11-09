@@ -45,6 +45,7 @@ flowchart LR
 | `routing` | Opus as main model, Sonnet and Fable as delegation routes |
 | `memory` | Basic Memory over the Markdown memory vault, wired into Hermes as MCP |
 | `service` | Gateway as a systemd user service that survives reboots |
+| `desktop` | Monday's visible Chromium on Xvfb, viewed over loopback-only x11vnc + noVNC (SSH tunnel); Hermes WebUI on the tailnet via `tailscale serve` |
 | `backup` | Nightly encrypted restic backup to Cloudflare R2, as root |
 | `lockdown` | Operator sudo requires a password, with a 10-minute automatic revert as a safety net |
 
@@ -132,6 +133,8 @@ server/
   memory/
     brain-autocommit      hourly commit of the memory vault (runs as monday)
     brain-autocommit.*    systemd user service + timer
+  desktop/
+    *.service             Xvfb, x11vnc, noVNC, Chromium, Hermes WebUI (systemd user units)
 .claude/skills/
   security-audit/         Cloudflare's security-audit skill (vendored, MIT; see UPSTREAM.md)
 .github/workflows/
