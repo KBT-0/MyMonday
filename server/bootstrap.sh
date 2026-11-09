@@ -376,15 +376,29 @@ phase_memory() {
     for r in brain-core brain-private; do
       projects | tr " " "\n" | grep -qx "$r" || "$bm" project add "$r" "$BRAIN/$r"
     done
-    # Sensitive notes (SCHEMA: access: on_request) live in brain-private/sensitive/. The brain-private
-    # index skips that folder (.bmignore), so automatic search never returns them; the folder is its
-    # own project, brain-sensitive, which Monday opens only when the owner explicitly asks (SOUL.md).
+    # Sensitive notes (SCHEMA: access: on_request) live in their own repo, brain-sensitive, which is
+    # its own Basic Memory project: automatic search over brain-core/brain-private never returns
+    # them, and Monday opens the project only when the owner explicitly asks (SOUL.md).
+    # (Basic Memory does not allow nested projects, so it cannot sit inside brain-private.)
+    s="$BRAIN/brain-sensitive"
+    if [ ! -d "$s/.git" ]; then
+      mkdir -p "$s"
+      git -C "$s" init -q -b main
+      cp -p "$BRAIN/brain-private/.git/hooks/pre-commit" "$s/.git/hooks/pre-commit"
+    fi
+    # One-off move from the first layout (brain-private/sensitive/); git keeps both histories.
+    if [ -d "$BRAIN/brain-private/sensitive" ]; then
+      for f in "$BRAIN/brain-private/sensitive"/*.md; do
+        [ -e "$f" ] || continue
+        sed "s|^permalink: brain-private/sensitive/|permalink: brain-sensitive/|" "$f" > "$s/$(basename "$f")"
+        rm "$f"
+      done
+      rmdir "$BRAIN/brain-private/sensitive"
+    fi
+    projects | tr " " "\n" | grep -qx brain-sensitive || "$bm" project add brain-sensitive "$s"
+    # Drop the .bmignore entry the first layout added (it would hide any folder named sensitive).
     bmi="$HOME/.basic-memory/.bmignore"
-    # A .bmignore with entries replaces the built-in defaults, so create the default file first.
-    [ -f "$bmi" ] || "$(uv tool dir)/basic-memory/bin/python" -c "from basic_memory.ignore_utils import create_default_bmignore as c; c()"
-    grep -qx "sensitive/" "$bmi" || printf "\n# brain-private/sensitive is its own project (access: on_request)\nsensitive/\n" >> "$bmi"
-    mkdir -p "$BRAIN/brain-private/sensitive"   # setgid parent: group projects, same ACL
-    projects | tr " " "\n" | grep -qx brain-sensitive || "$bm" project add brain-sensitive "$BRAIN/brain-private/sensitive"
+    if [ -f "$bmi" ]; then sed -i "/^# brain-private\/sensitive is its own project/d; /^sensitive\/\$/d" "$bmi"; fi
     "$bm" reindex
     "$bm" status
     h="$HOME/.local/bin/hermes"

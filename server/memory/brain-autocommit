@@ -9,7 +9,7 @@ set -uo pipefail
 
 BRAIN="${BRAIN:-/srv/projects/brain}"
 rc=0
-for repo in brain-core brain-private brain-raw; do
+for repo in brain-core brain-private brain-sensitive brain-raw; do
   d="$BRAIN/$repo"
   [ -d "$d/.git" ] || continue
   git -C "$d" add -A

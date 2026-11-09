@@ -226,22 +226,21 @@ owned by `monday`, group `projects`:
 |---|---|---|
 | `brain-core` | profile, projects, decisions, preferences, tools | yes |
 | `brain-private` | health, money, people, personal context | yes |
-| `brain-private/sensitive` | notes with `access: on_request` (sensitive topics and similar) | only as project `brain-sensitive` |
+| `brain-sensitive` | notes with `access: on_request` (sensitive topics and similar) | own project, opened on request |
 | `brain-raw` | immutable source archives (ChatGPT export, secrets redacted) | no |
 
 `brain-core/SCHEMA.md` is the contract: one note per entity, `## Current` / `## History`,
 every observation with `src:` and `by:` (`user_stated` or `ai_inferred`), tombstones instead of
 deletes. Each repo has a gitleaks pre-commit hook.
 
-Sensitive notes (`access: on_request`) live in `brain-private/sensitive/`. The `memory` phase adds
-`sensitive/` to `~monday/.basic-memory/.bmignore`, so the `brain-private` index and automatic
-search never return them, and registers the folder as its own project, `brain-sensitive`.
-`SOUL.md` tells Monday to open it only when the owner explicitly asks about that topic.
+Sensitive notes (`access: on_request`) live in their own repo, `brain-sensitive`, registered as a
+separate Basic Memory project (Basic Memory does not allow a project nested inside another), so
+search over `brain-core` / `brain-private` never returns them. `SOUL.md` tells Monday to open it only when the owner explicitly asks about that topic.
 
 The `memory` phase registers `brain-core` and `brain-private` as Basic Memory projects,
 reindexes them and adds Basic Memory to Hermes as the MCP server `brain` (stdio,
 `basic-memory mcp`) with `bm_delete` excluded: notes are tombstoned, never deleted. It also installs `brain-autocommit` (hourly user timer as `monday`): every change in
-the three repos is committed, through the gitleaks hook, so a note Monday breaks or deletes can
+the four repos is committed, through the gitleaks hook, so a note Monday breaks or deletes can
 always be restored from git (`git log -- <file>`, `git show <commit>:<file>`). A failed commit
 (a secret, for example) leaves the change staged and shows in
 `journalctl --user -u brain-autocommit`. The repos themselves are data: they come back from the restic backup,
@@ -267,7 +266,7 @@ sudo -u monday -H git -c user.name=Monday -c user.email=monday@monday.local -C /
 | hermes | Hermes Agent for `monday` via `hermes-agent.nousresearch.com/install.sh` into `~/.hermes` (no setup; no secrets) |
 | persona | `~/.hermes/SOUL.md` (default kept as `SOUL.md.default`), `~/.hermes/skins/monday.yaml`, `display.skin: monday` |
 | routing | `advanced-delegation` plugin, `model.default: claude-opus-5-5`, `delegation.backend: model_map` with routes `light` (Sonnet) and `advisor` (Fable) |
-| memory | `uv tool install basic-memory` (if missing), Basic Memory projects `brain-core`, `brain-private` and `brain-sensitive` (`.bmignore`: `sensitive/`), `basic-memory reindex`, Hermes MCP server `brain`, gateway restart, `/usr/local/bin/brain-autocommit` + user timer `brain-autocommit.timer` |
+| memory | `uv tool install basic-memory` (if missing), Basic Memory projects `brain-core`, `brain-private` and `brain-sensitive` (repo created on first run, with the gitleaks hook), `basic-memory reindex`, Hermes MCP server `brain`, gateway restart, `/usr/local/bin/brain-autocommit` + user timer `brain-autocommit.timer` |
 | service | `loginctl enable-linger monday`; `hermes gateway install` (systemd user unit, starts at boot) |
 | lockdown | removes `/etc/sudoers.d/90-<admin>` (sudo then asks for the password), marker `/etc/mymonday/sudo-password-required`, 10-minute revert timer `mymonday-sudo-revert` |
 | backup | `/usr/local/sbin/mymonday-backup`, `mymonday-backup.{service,timer}` (+ drop-in with the user names), `/etc/mymonday` (700), generated `restic.pass`; `restic init` and the timer once `restic.env` exists |
