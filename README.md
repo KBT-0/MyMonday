@@ -143,3 +143,8 @@ server/
 
 Claude Code picks up the security-audit skill when working in this repo: security questions and
 focused reviews use it as guidance; a full multi-phase audit runs only when asked for explicitly.
+
+## License
+
+MIT, see [LICENSE](LICENSE). The vendored security-audit skill keeps its own MIT license
+(Cloudflare, Inc.) in `.claude/skills/security-audit/LICENSE`.
