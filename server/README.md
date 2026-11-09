@@ -183,7 +183,7 @@ Credentials, all root-owned and mode 600 in `/etc/mymonday/`:
   value. `mymonday-backup` refuses an R2 URL in any other shape, because a wrong endpoint does not
   fail, it hangs on the TLS handshake.
 
-Useful commands: `sudo mymonday-backup snapshots`, `sudo systemctl start mymonday-backup`
+Useful commands: `sudo mymonday-backup snapshots`, `sudo mymonday-backup stats` (bytes stored in the bucket), `sudo systemctl start mymonday-backup`
 (run now), `journalctl -u mymonday-backup`.
 
 ## Restore

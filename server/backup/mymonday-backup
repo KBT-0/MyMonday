@@ -2,7 +2,7 @@
 # Encrypted, deduplicated backup of the monday server to an S3-compatible bucket (Cloudflare R2).
 # Installed to /usr/local/sbin by `bootstrap.sh <admin> backup`, run as root by mymonday-backup.timer.
 #
-# Usage: mymonday-backup [backup|init|snapshots|check|restore [snapshot]]   (default: backup)
+# Usage: mymonday-backup [backup|init|snapshots|stats|check|restore [snapshot]]   (default: backup)
 #
 # Credentials live only on the server, root-owned, mode 600:
 #   /etc/mymonday/restic.env   RESTIC_REPOSITORY, AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY
@@ -44,7 +44,7 @@ PATHS=("$AGENT_HOME" "$ADMIN_HOME" "$PROJECTS_DIR")
 EXCLUDES=(
   "$AGENT_HOME/.hermes/hermes-agent" "$AGENT_HOME/.hermes/tools" "$AGENT_HOME/.hermes/installs"
   "$AGENT_HOME/.hermes/cache" "$AGENT_HOME/.hermes/logs"
-  "*/.cache" "*/.npm" "*/.local/share/fnm" "*/.local/share/claude" "*/.local/state"
+  "*/.cache" "*/.npm" "*/.local/share/fnm" "*/.local/share/claude" "*/.local/share/uv" "*/.local/state"
   "*/node_modules" "*/.venv" "*/__pycache__" "*/target" "*/.next" "*/dist" "*/build"
 )
 
@@ -77,6 +77,7 @@ case "${1:-backup}" in
   init) cmd_init ;;
   restore) cmd_restore "${2:-latest}" ;;
   snapshots) restic snapshots ;;
+  stats) restic stats --mode raw-data ;;   # bytes actually stored in the bucket
   check) restic check ;;
   *) die "unknown command: $1" ;;
 esac
