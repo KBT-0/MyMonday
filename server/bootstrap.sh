@@ -374,6 +374,15 @@ phase_memory() {
     for r in brain-core brain-private; do
       projects | tr " " "\n" | grep -qx "$r" || "$bm" project add "$r" "$BRAIN/$r"
     done
+    # Sensitive notes (SCHEMA: access: on_request) live in brain-private/sensitive/. The brain-private
+    # index skips that folder (.bmignore), so automatic search never returns them; the folder is its
+    # own project, brain-sensitive, which Monday opens only when the owner explicitly asks (SOUL.md).
+    bmi="$HOME/.basic-memory/.bmignore"
+    # A .bmignore with entries replaces the built-in defaults, so create the default file first.
+    [ -f "$bmi" ] || "$(uv tool dir)/basic-memory/bin/python" -c "from basic_memory.ignore_utils import create_default_bmignore as c; c()"
+    grep -qx "sensitive/" "$bmi" || printf "\n# brain-private/sensitive is its own project (access: on_request)\nsensitive/\n" >> "$bmi"
+    mkdir -p "$BRAIN/brain-private/sensitive"   # setgid parent: group projects, same ACL
+    projects | tr " " "\n" | grep -qx brain-sensitive || "$bm" project add brain-sensitive "$BRAIN/brain-private/sensitive"
     "$bm" reindex
     "$bm" status
     h="$HOME/.local/bin/hermes"
