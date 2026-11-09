@@ -43,6 +43,7 @@ flowchart LR
 | `hermes` | Hermes Agent, installed with its official installer (read before running) |
 | `persona` | Monday's identity (`SOUL.md`) and CLI branding |
 | `routing` | Opus as main model, Sonnet and Fable as delegation routes |
+| `memory` | Basic Memory over the Markdown memory vault, wired into Hermes as MCP |
 | `service` | Gateway as a systemd user service that survives reboots |
 | `backup` | Nightly encrypted restic backup to Cloudflare R2, as root |
 | `lockdown` | Operator sudo requires a password, with a 10-minute automatic revert as a safety net |

@@ -21,6 +21,8 @@
 #   persona   install the Monday persona (SOUL.md) for AGENT_USER
 #   routing   Opus main model + delegation routes (Sonnet "light", Fable "advisor").
 #             Run after `hermes model` has stored the Anthropic key(s).
+#   memory    Basic Memory over the brain vault (PROJECTS_DIR/brain/brain-core and
+#             brain-private), wired into Hermes as the MCP server "brain"
 #   service   run the Hermes gateway as AGENT_USER's service that survives reboot
 #   backup    nightly encrypted restic backup to R2 as root. Enables the timer once
 #             /etc/mymonday/restic.env (R2 credentials, entered by hand) exists.
@@ -28,7 +30,7 @@
 #             CONFIRMED_SUDO_PASSWORD=yes; restores itself in 10 min unless cancelled.
 #
 # With no phase given, runs: base user tailscale agent userland hermes persona
-# (harden, routing, service, backup and lockdown are always explicit: they need a human step first).
+# (harden, routing, memory, service, backup and lockdown are always explicit: they need a human step first).
 #
 # Environment overrides:
 #   AGENT_USER        default: monday
@@ -346,6 +348,34 @@ phase_routing() {
   '
 }
 
+phase_memory() {
+  require_agent
+  local brain="$PROJECTS_DIR/brain"
+  log "memory: Basic Memory over $brain, MCP server \"brain\" for $AGENT_USER"
+  [ -d "$brain/brain-core/.git" ] || die "missing $brain/brain-core (the vault repos are restored from backup, see README)"
+  as_agent "BRAIN='$brain'"'
+    set -euo pipefail
+    export PATH="$HOME/.local/bin:$PATH"
+    command -v uv >/dev/null || { echo "uv not found for $USER (installed by the hermes phase)" >&2; exit 1; }
+    command -v basic-memory >/dev/null || uv tool install basic-memory
+    bm="$(command -v basic-memory)"
+    projects() { python3 -c "import json,os; print(*json.load(open(os.path.expanduser(\"~/.basic-memory/config.json\")))[\"projects\"])" 2>/dev/null || true; }
+    # brain-raw stays out of the index: it is an immutable archive, not notes.
+    for r in brain-core brain-private; do
+      projects | tr " " "\n" | grep -qx "$r" || "$bm" project add "$r" "$BRAIN/$r"
+    done
+    "$bm" reindex
+    "$bm" status
+    h="$HOME/.local/bin/hermes"
+    "$h" mcp list 2>/dev/null | grep -qw brain || "$h" mcp add brain --command "$bm" --args mcp
+    "$h" mcp list
+    # A running gateway only picks up new MCP servers on restart.
+    if systemctl --user --quiet is-active "hermes-gateway*" 2>/dev/null; then
+      systemctl --user restart "hermes-gateway*"
+    fi
+  '
+}
+
 phase_service() {
   require_agent
   log "gateway service for $AGENT_USER (systemd user unit + linger)"
@@ -416,7 +446,7 @@ phase_backup() {
 
 for p in "${PHASES[@]}"; do
   case "$p" in
-    base|user|tailscale|harden|agent|userland|hermes|persona|routing|service|backup|lockdown) "phase_$p" ;;
+    base|user|tailscale|harden|agent|userland|hermes|persona|routing|memory|service|backup|lockdown) "phase_$p" ;;
     *) die "unknown phase: $p" ;;
   esac
 done

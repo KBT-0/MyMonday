@@ -98,6 +98,12 @@ packages; for root work it gives the operator the command.
    Tasks with no option run on Opus. "Advice only" is an instruction in the route description
    and SOUL.md, not a hard limit: subagents inherit the parent's tools.
 
+   Then the memory vault (see [Memory vault](#memory-vault)), once `/srv/projects/brain` exists:
+
+   ```sh
+   ssh -t monday 'sudo bash ~/MyMonday/server/bootstrap.sh kemal memory'
+   ```
+
 8. Gateway service, then reboot and check:
 
    ```sh
@@ -206,8 +212,36 @@ sudo mymonday-backup snapshots
 sudo mymonday-backup restore            # or: restore <snapshot-id>
 ```
 
-Then run the `persona`, `routing` and `service` phases. The keys and the Telegram setup come
+Then run the `persona`, `routing`, `memory` and `service` phases. The keys and the Telegram setup come
 back with `~/.hermes`, so step 6 is skipped.
+
+## Memory vault
+
+Monday's long-term memory is plain Markdown in three git repos under `/srv/projects/brain`,
+owned by `monday`, group `projects`:
+
+| Repo | Contents | Indexed |
+|---|---|---|
+| `brain-core` | profile, projects, decisions, preferences, tools | yes |
+| `brain-private` | health, money, people, personal context | yes |
+| `brain-raw` | immutable source archives (ChatGPT export, secrets redacted) | no |
+
+`brain-core/SCHEMA.md` is the contract: one note per entity, `## Current` / `## History`,
+every observation with `src:` and `by:` (`user_stated` or `ai_inferred`), tombstones instead of
+deletes. Each repo has a gitleaks pre-commit hook.
+
+The `memory` phase registers `brain-core` and `brain-private` as Basic Memory projects,
+reindexes them and adds Basic Memory to Hermes as the MCP server `brain` (stdio,
+`basic-memory mcp`). The repos themselves are data: they come back from the restic backup,
+not from this script. The vault is not pushed anywhere; git history on the server plus the
+encrypted R2 backup are the copies.
+
+Commits by hand go through `monday`, so the hook finds gitleaks:
+
+```sh
+cd /srv/projects/brain
+sudo -u monday -H git -c user.name=Monday -c user.email=monday@monday.local -C brain-core status
+```
 
 ## What bootstrap.sh changes
 
@@ -222,6 +256,7 @@ back with `~/.hermes`, so step 6 is skipped.
 | hermes | Hermes Agent for `monday` via `hermes-agent.nousresearch.com/install.sh` into `~/.hermes` (no setup; no secrets) |
 | persona | `~/.hermes/SOUL.md` (default kept as `SOUL.md.default`), `~/.hermes/skins/monday.yaml`, `display.skin: monday` |
 | routing | `advanced-delegation` plugin, `model.default: claude-opus-5-5`, `delegation.backend: model_map` with routes `light` (Sonnet) and `advisor` (Fable) |
+| memory | `uv tool install basic-memory` (if missing), Basic Memory projects `brain-core` and `brain-private`, `basic-memory reindex`, Hermes MCP server `brain`, gateway restart |
 | service | `loginctl enable-linger monday`; `hermes gateway install` (systemd user unit, starts at boot) |
 | lockdown | removes `/etc/sudoers.d/90-<admin>` (sudo then asks for the password), marker `/etc/mymonday/sudo-password-required`, 10-minute revert timer `mymonday-sudo-revert` |
 | backup | `/usr/local/sbin/mymonday-backup`, `mymonday-backup.{service,timer}` (+ drop-in with the user names), `/etc/mymonday` (700), generated `restic.pass`; `restic init` and the timer once `restic.env` exists |
