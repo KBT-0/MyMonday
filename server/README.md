@@ -178,6 +178,11 @@ Credentials, all root-owned and mode 600 in `/etc/mymonday/`:
   AWS_DEFAULT_REGION=auto
   ```
 
+  `<account-id>` is the 32-character hex Account ID from the R2 overview page. The token screen
+  shows three values: use the Access Key ID and the Secret Access Key, not the `cfat_...` token
+  value. `mymonday-backup` refuses an R2 URL in any other shape, because a wrong endpoint does not
+  fail, it hangs on the TLS handshake.
+
 Useful commands: `sudo mymonday-backup snapshots`, `sudo systemctl start mymonday-backup`
 (run now), `journalctl -u mymonday-backup`.
 
@@ -273,4 +278,4 @@ maintainer scripts as root.
 ## Open items
 
 - Restricted SSH entry for a second machine (forced command).
-- First real run of `firewall.sh` and of the backup against R2.
+- First real run of `firewall.sh`.

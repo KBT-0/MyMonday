@@ -26,6 +26,14 @@ set -a
 . "$ENV_FILE"
 set +a
 : "${RESTIC_REPOSITORY:?RESTIC_REPOSITORY not set in $ENV_FILE}"
+# A wrong R2 endpoint does not fail fast, it hangs on the TLS handshake. Catch the common mistake
+# (a token pasted in place of the account ID) up front, without echoing the value.
+r2_re='^s3:https://[0-9a-f]{32}\.(eu\.)?r2\.cloudflarestorage\.com/[a-z0-9][a-z0-9-]{1,61}[a-z0-9]$'
+case "$RESTIC_REPOSITORY" in
+  *r2.cloudflarestorage.com*)
+    [[ "$RESTIC_REPOSITORY" =~ $r2_re ]] ||
+      die "RESTIC_REPOSITORY is not s3:https://<32-hex account ID>.r2.cloudflarestorage.com/<bucket>" ;;
+esac
 
 AGENT_HOME="$(getent passwd "${AGENT_USER:-monday}" | cut -d: -f6)"
 ADMIN_HOME="$(getent passwd "${ADMIN_USER:-kemal}" | cut -d: -f6)"

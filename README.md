@@ -107,7 +107,7 @@ inherit the parent's tools. That trade-off is documented rather than hidden.
 
 - [x] Run Hermes as a dedicated user without sudo
 - [x] Encrypted restic backups to Cloudflare R2, root-only, with a documented restore path
-- [ ] First backup run against the real R2 bucket
+- [x] First backup run against the real R2 bucket
 - [ ] Restricted SSH entry for a second machine (forced command)
 - [ ] Hetzner Cloud Firewall as a second layer in front of ufw (script ready: `server/hetzner/firewall.sh`)
 
