@@ -128,6 +128,14 @@ server/
   backup/
     mymonday-backup       restic backup / restore wrapper (root only)
     mymonday-backup.*     systemd service + nightly timer
+  memory/
+    brain-autocommit      hourly commit of the memory vault (runs as monday)
+    brain-autocommit.*    systemd user service + timer
+.claude/skills/
+  security-audit/         Cloudflare's security-audit skill (vendored, MIT; see UPSTREAM.md)
 .github/workflows/
   shellcheck.yml          lint on every push
 ```
+
+Claude Code picks up the security-audit skill when working in this repo: security questions and
+focused reviews use it as guidance; a full multi-phase audit runs only when asked for explicitly.
