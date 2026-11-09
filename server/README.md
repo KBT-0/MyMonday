@@ -278,4 +278,3 @@ maintainer scripts as root.
 ## Open items
 
 - Restricted SSH entry for a second machine (forced command).
-- First real run of `firewall.sh`.
