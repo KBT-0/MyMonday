@@ -21,7 +21,7 @@ flowchart LR
         opus -->|"delegate: light"| sonnet["Sonnet 5.5<br/>routine bulk subtasks"]
         opus -->|"delegate: advisor"| fable["Fable 5.1<br/>advice only"]
         opus --> tools["tools: shell, files, web,<br/>Claude Code, Node"]
-        tools --> projects[("/srv/projects<br/>shared with operator")]
+        tools --> projects[("/srv/projects<br/>owned by monday")]
     end
 
     mac["Mac"] -->|"SSH over Tailscale only<br/>operator 'kemal', sudo"| monday
@@ -38,7 +38,7 @@ flowchart LR
 | `user` | Operator account with sudo and the root SSH keys |
 | `tailscale` | Tailscale from the official apt repo, interactive `tailscale up` |
 | `harden` | sshd: no passwords, no root. ufw: deny incoming, allow `tailscale0` and WireGuard `41641/udp` |
-| `agent` | Unprivileged `monday` account for the assistant; shared `/srv/projects` with a default ACL |
+| `agent` | Unprivileged `monday` account for the assistant; `/srv/projects` owned by it (operator uses `sudo -u monday`) |
 | `userland` | Node LTS via fnm, Claude Code, for both accounts |
 | `hermes` | Hermes Agent, installed with its official installer (read before running) |
 | `persona` | Monday's identity (`SOUL.md`) and CLI branding |
@@ -62,9 +62,10 @@ checked with `sshd -t` before reload. The sshd drop-in is named `00-…` because
 first value it reads, and cloud images ship their own drop-ins.
 
 **The assistant has no root.** Monday runs as its own `monday` account: no sudo, locked password,
-no SSH keys, and no access to the operator's home. Projects live in a shared directory with a
-default ACL so both accounts can work on them. When root is needed, Monday hands the operator
-the command. A prompt injection can only act with the rights of that one account.
+no SSH keys, and no access to the operator's home. Projects live in `/srv/projects`, owned by
+`monday`; the operator works there only as `monday` (`sudo -u monday`), never with its own
+identity, so agent-written git hooks or scripts cannot run as the operator. When root is needed,
+Monday hands the operator the command. A prompt injection can only act with the rights of that one account.
 
 **Least privilege at the end, with a dead man's switch.** The unattended phases need password-less
 sudo; the final `lockdown` phase removes it. It refuses to run unless the operator has a password and

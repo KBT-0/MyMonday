@@ -13,8 +13,10 @@ Nothing in `bootstrap.sh` is arm64-specific; it also runs on x86_64 Debian 13.
 | `kemal` | Human operator. SSH over Tailscale. | sudo with password (password-less only until the `lockdown` phase). |
 | `monday` | Runs Hermes (Monday). | No sudo, locked password, no SSH keys, home `700`. Reached with `sudo -iu monday`. |
 
-Both are in the `projects` group and share `/srv/projects` (setgid, default ACL `g:projects:rwx`),
-so either can edit what the other created. Monday cannot read `/home/kemal` and cannot install
+`/srv/projects` belongs to `monday` (group `projects`, setgid, default ACL `g:projects:rwx`).
+`kemal` is not in that group and works there only as `monday` (`sudo -u monday -H ...`): files
+there are agent-writable, so running git, npm, make or `claude` in them as `kemal` would let a
+prompt injection run code as the operator. Monday cannot read `/home/kemal` and cannot install
 packages; for root work it gives the operator the command.
 
 ## Files
@@ -249,8 +251,7 @@ encrypted R2 backup are the copies.
 Commits by hand go through `monday`, so the hook finds gitleaks:
 
 ```sh
-cd /srv/projects/brain
-sudo -u monday -H git -c user.name=Monday -c user.email=monday@monday.local -C brain-core status
+sudo -u monday -H git -c user.name=Monday -c user.email=monday@monday.local -C /srv/projects/brain/brain-core status
 ```
 
 ## What bootstrap.sh changes
@@ -261,7 +262,7 @@ sudo -u monday -H git -c user.name=Monday -c user.email=monday@monday.local -C b
 | user | operator with group sudo, password-less sudo in `/etc/sudoers.d/90-<user>`, root's authorized_keys copied |
 | tailscale | official apt repo `pkgs.tailscale.com`, `tailscale up --hostname=monday` |
 | harden | `/etc/ssh/sshd_config.d/00-mymonday.conf` (PasswordAuthentication no, KbdInteractiveAuthentication no, PermitRootLogin no); ufw default deny incoming, allow in on tailscale0, allow 41641/udp |
-| agent | user `monday` without sudo, locked password, linger; group `projects`; `/srv/projects` (2770 + default ACL) |
+| agent | user `monday` without sudo, locked password, linger; group `projects` (operator removed); `/srv/projects` owned by `monday` (2770 + default ACL) |
 | userland | for both users: fnm in `~/.local/share/fnm`, Node LTS as default, `.bashrc` block; Claude Code via `claude.ai/install.sh` (not logged in) |
 | hermes | Hermes Agent for `monday` via `hermes-agent.nousresearch.com/install.sh` into `~/.hermes` (no setup; no secrets) |
 | persona | `~/.hermes/SOUL.md` (default kept as `SOUL.md.default`), `~/.hermes/skins/monday.yaml`, `display.skin: monday` |

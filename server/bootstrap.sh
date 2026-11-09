@@ -247,13 +247,15 @@ phase_agent() {
     printf '\n# systemd user bus (mymonday)\nexport XDG_RUNTIME_DIR="/run/user/$(id -u)"\n' >> "$rc"
   chown "$AGENT_USER:$AGENT_USER" "$rc"
 
-  log "shared projects: $PROJECTS_DIR (group $PROJECTS_GROUP: $USERNAME, $AGENT_USER)"
+  log "agent projects: $PROJECTS_DIR (owner $AGENT_USER; $USERNAME works there via sudo -u $AGENT_USER)"
   command -v setfacl >/dev/null || apt-get "${APT_OPTS[@]}" install acl
   getent group "$PROJECTS_GROUP" >/dev/null || groupadd "$PROJECTS_GROUP"
-  usermod -aG "$PROJECTS_GROUP" "$USERNAME"
   usermod -aG "$PROJECTS_GROUP" "$AGENT_USER"
-  install -d -m 2770 -o "$USERNAME" -g "$PROJECTS_GROUP" "$PROJECTS_DIR"
-  # Default ACL: whatever either user creates stays group read/write for the other one.
+  # The operator stays out: anything here is agent-writable (git config, hooks, scripts), and
+  # running it as $USERNAME would hand a prompt injection the operator account and its sudo.
+  if id -nG "$USERNAME" | tr ' ' '\n' | grep -qx "$PROJECTS_GROUP"; then gpasswd -d "$USERNAME" "$PROJECTS_GROUP"; fi
+  install -d -m 2770 -o "$AGENT_USER" -g "$PROJECTS_GROUP" "$PROJECTS_DIR"
+  chown -R "$AGENT_USER:$PROJECTS_GROUP" "$PROJECTS_DIR"
   setfacl -m "g:$PROJECTS_GROUP:rwx" -d -m "g:$PROJECTS_GROUP:rwx" "$PROJECTS_DIR"
 }
 
