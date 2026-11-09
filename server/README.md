@@ -158,6 +158,14 @@ deduplicated restic snapshot in a Cloudflare R2 bucket:
 - `/srv/projects` (without `node_modules`, `.venv`, build output and caches)
 
 Retention: 7 daily, 4 weekly, 6 monthly. Sundays add `restic check --read-data-subset=5%`.
+restic also keeps the oldest snapshot while those buckets are still filling. After changing the
+excludes, drop an oversized early snapshot by hand (nothing secret is printed):
+
+```sh
+sudo sh -c 'set -a; . /etc/mymonday/restic.env; RESTIC_PASSWORD_FILE=/etc/mymonday/restic.pass; restic forget <id> --prune'
+```
+
+On this server the first full snapshot is about 157 MiB of data, 70 MiB stored in R2.
 Root-only credentials mean the assistant account can neither read nor delete its backups.
 
 Credentials, all root-owned and mode 600 in `/etc/mymonday/`:
