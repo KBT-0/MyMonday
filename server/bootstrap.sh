@@ -377,7 +377,11 @@ phase_memory() {
     "$bm" reindex
     "$bm" status
     h="$HOME/.local/bin/hermes"
-    "$h" mcp list 2>/dev/null | grep -qw brain || "$h" mcp add brain --command "$bm" --args mcp
+    # "Enable all tools?" is answered yes; bm_delete is then filtered out below.
+    "$h" mcp list 2>/dev/null | grep -qw brain || printf "y\n" | "$h" mcp add brain --command "$bm" --args mcp
+    # SCHEMA.md: notes are never deleted, only tombstoned (bm_edit). Git keeps the rest.
+    "$h" config set mcp_servers.brain.tools.exclude "[bm_delete]"
+    grep -A12 "^  brain:" "$HOME/.hermes/config.yaml"
     "$h" mcp list
     systemctl --user daemon-reload
     systemctl --user enable --now brain-autocommit.timer

@@ -232,7 +232,7 @@ deletes. Each repo has a gitleaks pre-commit hook.
 
 The `memory` phase registers `brain-core` and `brain-private` as Basic Memory projects,
 reindexes them and adds Basic Memory to Hermes as the MCP server `brain` (stdio,
-`basic-memory mcp`). It also installs `brain-autocommit` (hourly user timer as `monday`): every change in
+`basic-memory mcp`) with `bm_delete` excluded: notes are tombstoned, never deleted. It also installs `brain-autocommit` (hourly user timer as `monday`): every change in
 the three repos is committed, through the gitleaks hook, so a note Monday breaks or deletes can
 always be restored from git (`git log -- <file>`, `git show <commit>:<file>`). A failed commit
 (a secret, for example) leaves the change staged and shows in
