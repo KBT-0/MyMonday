@@ -46,6 +46,7 @@ flowchart LR
 | `memory` | Basic Memory over the Markdown memory vault, wired into Hermes as MCP |
 | `service` | Gateway as a systemd user service that survives reboots |
 | `desktop` | Monday's visible Chromium on Xvfb, viewed over loopback-only x11vnc + noVNC (SSH tunnel); Hermes WebUI on the tailnet via `tailscale serve` |
+| `monster` | SSH key and `ssh monster` alias for the assistant, plus the `monster` skill (see below) |
 | `backup` | Nightly encrypted restic backup to Cloudflare R2, as root |
 | `lockdown` | Operator sudo requires a password, with a 10-minute automatic revert as a safety net |
 
@@ -104,6 +105,12 @@ inherit the parent's tools. That trade-off is documented rather than hidden.
 - Monday can run shell commands as `monday`. Content it reads (web pages, forwarded messages) could
   carry a prompt injection that acts with that account's rights: its own files, `/srv/projects`, and
   its API keys. The Telegram allowlist limits who can talk to it, not what it reads.
+- Monster (the operator's workstation) accepts the assistant's key only from the server's
+  Tailscale IP and only into `monster-ctl`. But the Claude Code sessions there run as the
+  operator, so text the assistant types into a session acts with the operator's rights, and
+  project files are shared. Accepted: the operator uses the assistant as remote hands. The
+  operator is out of the `docker` group and sudo needs the operator's password
+  (`monday-grant <minutes>` lends it for a limited time).
 - Port 22 on the public IP is closed; the provider's web console is the break-glass path.
 
 ## Roadmap
@@ -111,7 +118,8 @@ inherit the parent's tools. That trade-off is documented rather than hidden.
 - [x] Run Hermes as a dedicated user without sudo
 - [x] Encrypted restic backups to Cloudflare R2, root-only, with a documented restore path
 - [x] First backup run against the real R2 bucket
-- [ ] Restricted SSH entry for a second machine (forced command)
+- [x] Restricted SSH entry for a second machine (forced command, `monster/`)
+- [ ] Wake-on-LAN relay at the Monster site (old Android phones on the LAN)
 - [x] Hetzner Cloud Firewall as a second layer in front of ufw (`server/hetzner/firewall.sh`)
 
 ## Repository layout
@@ -124,6 +132,7 @@ server/
     SOUL.md               Monday's identity and voice
     model_map.json        delegation routes (light, advisor)
     skins/monday.yaml     CLI branding
+    skills/monster/       how Monday drives Monster
   hetzner/
     firewall.sh           provider firewall via hcloud (run from the operator's machine)
     firewall-rules.json   inbound: Tailscale UDP 41641 and ICMP only
@@ -135,6 +144,10 @@ server/
     brain-autocommit.*    systemd user service + timer
   desktop/
     *.service             Xvfb, x11vnc, noVNC, Chromium, Hermes WebUI (systemd user units)
+monster/                  the owner's workstation (CachyOS, home city), driven by Monday
+  setup.sh                forced-command key, poweroff without password, monday-grant
+  monster-ctl             status, projects, Claude Code sessions in tmux, off/reboot
+  mon                     the operator attaches to the same sessions
 .claude/skills/
   security-audit/         Cloudflare's security-audit skill (vendored, MIT; see UPSTREAM.md)
 .github/workflows/

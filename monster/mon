@@ -1,0 +1,4 @@
+#!/usr/bin/env bash
+# mon [session]: attach to a Claude session Monday runs on Monster (detach: Ctrl-b d).
+# Without a session name: list them.
+if [ -n "${1:-}" ]; then exec tmux -L monster attach -t "=$1"; else tmux -L monster ls 2>/dev/null || echo "no sessions"; fi

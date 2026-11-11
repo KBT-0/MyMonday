@@ -27,13 +27,15 @@
 #   desktop   visible browser for AGENT_USER: Xvfb, x11vnc + noVNC (loopback only), Chromium with
 #             CDP, and Hermes WebUI on the tailnet (tailscale serve :443). Run after `service`.
 #   service   run the Hermes gateway as AGENT_USER's service that survives reboot
+#   monster   SSH key + `ssh monster` alias for AGENT_USER and the monster skill (the owner's
+#             workstation; the Monster side is monster/setup.sh). Prints the public key.
 #   backup    nightly encrypted restic backup to R2 as root. Enables the timer once
 #             /etc/mymonday/restic.env (R2 credentials, entered by hand) exists.
 #   lockdown  last step: <admin-user>'s sudo requires its password. Needs a password set and
 #             CONFIRMED_SUDO_PASSWORD=yes; restores itself in 10 min unless cancelled.
 #
 # With no phase given, runs: base user tailscale agent userland hermes persona
-# (harden, routing, memory, service, desktop, backup and lockdown are always explicit: they need a human step first).
+# (harden, routing, memory, service, desktop, monster, backup and lockdown are always explicit: they need a human step first).
 #
 # Environment overrides:
 #   AGENT_USER        default: monday
@@ -41,6 +43,7 @@
 #   SERVER_HOSTNAME   default: monday
 #   SERVER_TIMEZONE   default: UTC
 #   SWAP_SIZE         default: 2G
+#   MONSTER_HOST      default: MONSTER_TAILSCALE_IP (Monster on Tailscale); MONSTER_USER default: owner
 #
 # shellcheck disable=SC2016  # as_user bodies are single-quoted on purpose: they expand
 #                            # in the target user's shell ($HOME, $PATH), not root's.
@@ -481,6 +484,23 @@ phase_service() {
   '
 }
 
+phase_monster() {
+  require_agent
+  log "monster: ssh alias and skill for $AGENT_USER"
+  local h host="${MONSTER_HOST:-MONSTER_TAILSCALE_IP}" user="${MONSTER_USER:-owner}"
+  h="$(home_of "$AGENT_USER")"
+  install -d -m 700 -o "$AGENT_USER" -g "$AGENT_USER" "$h/.hermes/skills/monster"
+  install -m 644 -o "$AGENT_USER" -g "$AGENT_USER" "$SCRIPT_DIR/hermes/skills/monster/SKILL.md" \
+    "$h/.hermes/skills/monster/SKILL.md"
+  as_agent '
+    set -euo pipefail
+    install -d -m 700 ~/.ssh
+    [ -f ~/.ssh/id_ed25519_monster ] || ssh-keygen -q -t ed25519 -N "" -C monday@monday -f ~/.ssh/id_ed25519_monster
+    printf "Host monster\n  HostName %s\n  User %s\n  IdentityFile ~/.ssh/id_ed25519_monster\n  IdentitiesOnly yes\n  ConnectTimeout 10\n" '"$host"' '"$user"' > ~/.ssh/config
+    chmod 600 ~/.ssh/config
+    cat ~/.ssh/id_ed25519_monster.pub'
+}
+
 phase_lockdown() {
   log "lockdown: sudo for $USERNAME requires its password"
   [ "$(passwd -S "$USERNAME" | cut -d' ' -f2)" = P ] ||
@@ -537,7 +557,7 @@ phase_backup() {
 
 for p in "${PHASES[@]}"; do
   case "$p" in
-    base|user|tailscale|harden|agent|userland|hermes|persona|routing|memory|service|desktop|backup|lockdown) "phase_$p" ;;
+    base|user|tailscale|harden|agent|userland|hermes|persona|routing|memory|service|desktop|monster|backup|lockdown) "phase_$p" ;;
     *) die "unknown phase: $p" ;;
   esac
 done
