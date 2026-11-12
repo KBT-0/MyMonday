@@ -33,6 +33,7 @@ All commands go through `ssh monster <command>`; Monster only accepts these:
 | `printf '%s' "<text>" \| ssh monster send <name>` | type text into the session + Enter |
 | `ssh monster key <name> Escape` | special keys: Escape, C-c, Enter, Up, Down, BTab |
 | `ssh monster stop <name>` | end the session |
+| `ssh monster sleep` | suspend: sessions and the owner's open windows survive, `monster-wake` resumes it |
 | `ssh monster off` / `reboot` | power off / reboot |
 
 1. Not reachable (`ssh monster status` times out)? Monster is off: wake it with
@@ -49,7 +50,7 @@ All commands go through `ssh monster <command>`; Monster only accepts these:
 
 ## Pitfalls
 - `status` showing `DESKTOP: the owner is logged in` means his own open work (often resumed from
-  sleep). Never `off` or `reboot` then, not even when idle: ask him first.
+  sleep). Never `off` or `reboot` then, not even when idle: ask him first. `sleep` is safe.
 - Right after `start`, `read` first. A new folder shows Claude Code's "Do you trust the files in
   this folder?" menu: for the owner's own project folders answer with `key <name> Enter` (option 1 is
   already selected); anywhere else, ask the owner. Never `send` text before the `❯` prompt is shown:

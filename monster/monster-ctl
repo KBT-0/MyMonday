@@ -11,6 +11,7 @@
 #   send <name>             type stdin into the session, then Enter
 #   key <name> <key...>     send tmux keys, e.g. Escape, C-c, Enter
 #   stop <name>             end the session
+#   sleep                   suspend Monster (sessions and open windows survive; WoL wakes it)
 #   off | reboot            power off / reboot Monster
 set -euo pipefail
 
@@ -51,5 +52,6 @@ case "$cmd" in
   stop) name_ok "${1:?name}"; t kill-session -t "=$1"; echo "stopped $1" ;;
   off) t kill-server 2>/dev/null || true; sudo -n /usr/bin/systemctl poweroff ;;
   reboot) sudo -n /usr/bin/systemctl reboot ;;
+  sleep) sudo -n /usr/bin/systemctl suspend ;;
   *) sed -n '2,15p' "$0" | sed 's/^# \{0,1\}//'; exit 2 ;;
 esac

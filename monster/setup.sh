@@ -9,7 +9,7 @@
 # sudo password stays the last lock; the owner is taken out of the docker group (= root).
 #
 # - monster-idle-off.timer: power off after 24 hours with no session, SSH or desktop login
-# - sudo without password only for poweroff and reboot
+# - sudo without password only for poweroff, reboot and suspend
 # - /usr/local/sbin/monday-grant <minutes>|off: the owner gives passwordless sudo for a
 #   limited time; typing the owner's sudo password is the approval
 set -euo pipefail
@@ -52,7 +52,7 @@ mv "$ak.tmp" "$ak"; chown "$owner:" "$ak"; chmod 600 "$ak"
 
 gpasswd -d "$owner" docker >/dev/null 2>&1 || true
 
-printf '%s ALL=(root) NOPASSWD: /usr/bin/systemctl poweroff, /usr/bin/systemctl reboot\n' "$owner" \
+printf '%s ALL=(root) NOPASSWD: /usr/bin/systemctl poweroff, /usr/bin/systemctl reboot, /usr/bin/systemctl suspend\n' "$owner" \
   > /etc/sudoers.d/80-monster
 chmod 440 /etc/sudoers.d/80-monster
 
