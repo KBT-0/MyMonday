@@ -26,7 +26,12 @@ case "$cmd" in
   status)
     uptime -p; cat /sys/class/power_supply/BAT0/capacity /sys/class/power_supply/AC0/online 2>/dev/null \
       | paste -sd' ' | awk '{print "battery " $1 "%, on AC: " ($2==1?"yes":"no")}'
-    cut -d' ' -f1-3 /proc/loadavg; t ls 2>/dev/null || echo "no sessions" ;;
+    cut -d' ' -f1-3 /proc/loadavg
+    # the owner's own desktop login (open windows, maybe work resumed from sleep)
+    for s in $(loginctl list-sessions --no-legend | awk -v u="$USER" '$3==u {print $1}'); do
+      [ "$(loginctl show-session "$s" -p Type --value)" = wayland ] && echo "DESKTOP: the owner is logged in (open work)"
+    done
+    t ls 2>/dev/null || echo "no sessions" ;;
   projects) ls -1 "$DEV" ;;
   ls) t ls 2>/dev/null || echo "no sessions" ;;
   start)

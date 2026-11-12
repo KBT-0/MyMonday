@@ -4,8 +4,9 @@
 # desktop. Runs every 5 min from monster-idle-off.timer, as root.
 set -euo pipefail
 owner=${1:?owner}; limit=$(( ${2:-1440} * 60 ))
-state=/run/monster-idle-off.last-busy
-now=$(date +%s)
+state=/run/monster-idle-off.last-busy   # /run is cleared on boot
+# awake seconds only (CLOCK_MONOTONIC stops while suspended), so days of sleep never count as idle
+now=$(python3 -c "import time; print(int(time.monotonic()))")
 
 busy=no
 runuser -u "$owner" -- tmux -L monster ls >/dev/null 2>&1 && busy=yes            # sessions

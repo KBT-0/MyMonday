@@ -45,9 +45,11 @@ All commands go through `ssh monster <command>`; Monster only accepts these:
    waiting for him (a question, a permission prompt, a finished change).
 5. Work on a branch, never on master/main, unless the owner says so. Push only when the owner asks.
 6. When the owner says he is done, or nothing ran for 30 min: stop the sessions and `ssh monster off`,
-   after telling him.
+   after telling him (not when `status` shows `DESKTOP`, see Pitfalls).
 
 ## Pitfalls
+- `status` showing `DESKTOP: the owner is logged in` means his own open work (often resumed from
+  sleep). Never `off` or `reboot` then, not even when idle: ask him first.
 - Right after `start`, `read` first. A new folder shows Claude Code's "Do you trust the files in
   this folder?" menu: for the owner's own project folders answer with `key <name> Enter` (option 1 is
   already selected); anywhere else, ask the owner. Never `send` text before the `❯` prompt is shown:
