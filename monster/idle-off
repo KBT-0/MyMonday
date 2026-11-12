@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
-# idle-off <owner> [minutes]: power Monster off when nothing has used it for <minutes> (default 45).
+# idle-off <owner> [minutes]: power Monster off when nothing has used it for <minutes> (default 1440 = 24 h).
 # Busy = a Monday/Claude tmux session, an open SSH connection, or the owner logged in at the
 # desktop. Runs every 5 min from monster-idle-off.timer, as root.
 set -euo pipefail
-owner=${1:?owner}; limit=$(( ${2:-45} * 60 ))
+owner=${1:?owner}; limit=$(( ${2:-1440} * 60 ))
 state=/run/monster-idle-off.last-busy
 now=$(date +%s)
 

@@ -8,7 +8,7 @@
 # Accepted risk: text Monday types into a session runs with the owner's rights. The owner's
 # sudo password stays the last lock; the owner is taken out of the docker group (= root).
 #
-# - monster-idle-off.timer: power off after 45 minutes with no session, SSH or desktop login
+# - monster-idle-off.timer: power off after 24 hours with no session, SSH or desktop login
 # - sudo without password only for poweroff and reboot
 # - /usr/local/sbin/monday-grant <minutes>|off: the owner gives passwordless sudo for a
 #   limited time; typing the owner's sudo password is the approval
@@ -23,13 +23,13 @@ here=$(dirname "$(readlink -f "$0")")
 install -m 755 "$here/monster-ctl" "$here/mon" /usr/local/bin/
 install -m 755 "$here/idle-off" /usr/local/sbin/monster-idle-off
 
-# Safety net: power off after 45 idle minutes, even if Monday forgets to.
+# Safety net: power off after 24 idle hours, even if Monday forgets to.
 cat > /etc/systemd/system/monster-idle-off.service <<EOF
 [Unit]
 Description=Power Monster off when idle
 [Service]
 Type=oneshot
-ExecStart=/usr/local/sbin/monster-idle-off $owner 45
+ExecStart=/usr/local/sbin/monster-idle-off $owner 1440
 EOF
 cat > /etc/systemd/system/monster-idle-off.timer <<'EOF'
 [Unit]
