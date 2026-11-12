@@ -43,8 +43,9 @@
 #   SERVER_HOSTNAME   default: monday
 #   SERVER_TIMEZONE   default: UTC
 #   SWAP_SIZE         default: 2G
-#   MONSTER_HOST      default: MONSTER_TAILSCALE_IP (Monster on Tailscale); MONSTER_USER default: owner
+#   MONSTER_HOST      Monster's Tailscale IP; MONSTER_USER default: owner
 #   MONSTER_PHONE1/2  Tailscale IPs of the Wake-on-LAN phones at Monster's home (Termux sshd :8022)
+#   These personal values live in local.env next to this repo's README (git-ignored).
 #
 # shellcheck disable=SC2016  # as_user bodies are single-quoted on purpose: they expand
 #                            # in the target user's shell ($HOME, $PATH), not root's.
@@ -488,8 +489,10 @@ phase_service() {
 phase_monster() {
   require_agent
   log "monster: ssh alias and skill for $AGENT_USER"
-  local h host="${MONSTER_HOST:-MONSTER_TAILSCALE_IP}" user="${MONSTER_USER:-owner}"
-  local phone1="${MONSTER_PHONE1:-PHONE_TAILSCALE_IP}" phone2="${MONSTER_PHONE2:-0.0.0.0}"
+  # shellcheck disable=SC1091  # personal values, not in git
+  [ -f "$SCRIPT_DIR/../local.env" ] && . "$SCRIPT_DIR/../local.env"
+  local h host="${MONSTER_HOST:?set MONSTER_HOST in local.env}" user="${MONSTER_USER:-owner}"
+  local phone1="${MONSTER_PHONE1:?set MONSTER_PHONE1 in local.env}" phone2="${MONSTER_PHONE2:-127.0.0.9}"
   h="$(home_of "$AGENT_USER")"
   install -d -m 700 -o "$AGENT_USER" -g "$AGENT_USER" "$h/.hermes/skills/monster"
   install -m 644 -o "$AGENT_USER" -g "$AGENT_USER" "$SCRIPT_DIR/hermes/skills/monster/SKILL.md" \

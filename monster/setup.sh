@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Set up Monster (CachyOS workstation, home city) so Monday can drive it over Tailscale.
-# Idempotent. Run as root on Monster, from this folder:  bash setup.sh <owner-user> monday.pub
+# Idempotent. Run as root on Monster, from this folder:  bash setup.sh <owner-user> <monday-ssh-pubkey-file>
 #
 # Monday's key logs in as the owner, but only from the monday server's Tailscale IP and
 # only into monster-ctl (forced command): Claude Code sessions run as the owner, with the
@@ -15,7 +15,9 @@
 set -euo pipefail
 
 owner=${1:?owner user}; pub=${2:?monday ssh public key file}
-SERVER_IP=${SERVER_IP:-SERVER_TAILSCALE_IP}
+# shellcheck disable=SC1091  # personal values, not in git
+[ -f "$(dirname "$(readlink -f "$0")")/../local.env" ] && . "$(dirname "$(readlink -f "$0")")/../local.env"
+SERVER_IP=${SERVER_IP:?set SERVER_IP (the monday server Tailscale IP) in local.env}
 home_o=$(getent passwd "$owner" | cut -d: -f6)
 grep -q '^ssh-ed25519 ' "$pub" || { echo "$pub is not an ed25519 public key"; exit 1; }
 here=$(dirname "$(readlink -f "$0")")
