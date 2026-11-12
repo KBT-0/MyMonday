@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Set up Monster (CachyOS workstation, home city) so Monday can drive it over Tailscale.
-# Idempotent. Run as root on Monster, from this folder:  bash setup.sh <owner-user> <monday-ssh-pubkey-file>
+# Idempotent. Run as root on Monster, from this folder:  bash setup.sh <owner-user> monday.pub
 #
 # Monday's key logs in as the owner, but only from the monday server's Tailscale IP and
 # only into monster-ctl (forced command): Claude Code sessions run as the owner, with the
@@ -8,6 +8,7 @@
 # Accepted risk: text Monday types into a session runs with the owner's rights. The owner's
 # sudo password stays the last lock; the owner is taken out of the docker group (= root).
 #
+# - monster-idle-off.timer: power off after 45 minutes with no session, SSH or desktop login
 # - sudo without password only for poweroff and reboot
 # - /usr/local/sbin/monday-grant <minutes>|off: the owner gives passwordless sudo for a
 #   limited time; typing the owner's sudo password is the approval
@@ -20,6 +21,27 @@ grep -q '^ssh-ed25519 ' "$pub" || { echo "$pub is not an ed25519 public key"; ex
 here=$(dirname "$(readlink -f "$0")")
 
 install -m 755 "$here/monster-ctl" "$here/mon" /usr/local/bin/
+install -m 755 "$here/idle-off" /usr/local/sbin/monster-idle-off
+
+# Safety net: power off after 45 idle minutes, even if Monday forgets to.
+cat > /etc/systemd/system/monster-idle-off.service <<EOF
+[Unit]
+Description=Power Monster off when idle
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/monster-idle-off $owner 45
+EOF
+cat > /etc/systemd/system/monster-idle-off.timer <<'EOF'
+[Unit]
+Description=Check every 5 min whether Monster is idle
+[Timer]
+OnBootSec=10min
+OnUnitActiveSec=5min
+[Install]
+WantedBy=timers.target
+EOF
+systemctl daemon-reload
+systemctl enable --now monster-idle-off.timer
 
 # Monday's key: forced command, no forwarding, no pty.
 ak="$home_o/.ssh/authorized_keys"

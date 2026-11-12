@@ -1,0 +1,23 @@
+#!/usr/bin/env bash
+# idle-off <owner> [minutes]: power Monster off when nothing has used it for <minutes> (default 45).
+# Busy = a Monday/Claude tmux session, an open SSH connection, or the owner logged in at the
+# desktop. Runs every 5 min from monster-idle-off.timer, as root.
+set -euo pipefail
+owner=${1:?owner}; limit=$(( ${2:-45} * 60 ))
+state=/run/monster-idle-off.last-busy
+now=$(date +%s)
+
+busy=no
+runuser -u "$owner" -- tmux -L monster ls >/dev/null 2>&1 && busy=yes            # sessions
+pgrep -f '^sshd-session: [^ ]+@' >/dev/null 2>&1 && busy=yes                      # live SSH
+pgrep -f '^sshd: [^ ]+@' >/dev/null 2>&1 && busy=yes                              # older sshd naming
+for s in $(loginctl list-sessions --no-legend | awk -v u="$owner" '$3==u {print $1}'); do
+  [ "$(loginctl show-session "$s" -p Type --value)" = wayland ] && busy=yes       # desktop login
+done
+
+if [ "$busy" = yes ] || [ ! -f "$state" ]; then echo "$now" > "$state"; exit 0; fi
+idle=$(( now - $(cat "$state") ))
+if [ "$idle" -ge "$limit" ]; then
+  logger -t monster-idle-off "idle ${idle}s, powering off"
+  systemctl poweroff
+fi
