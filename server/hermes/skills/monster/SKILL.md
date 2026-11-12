@@ -48,6 +48,10 @@ All commands go through `ssh monster <command>`; Monster only accepts these:
    after telling him.
 
 ## Pitfalls
+- Right after `start`, `read` first. A new folder shows Claude Code's "Do you trust the files in
+  this folder?" menu: for the owner's own project folders answer with `key <name> Enter` (option 1 is
+  already selected); anywhere else, ask the owner. Never `send` text before the `❯` prompt is shown:
+  if claude is not running, the text goes to the shell (fish) instead.
 - A permission or choice menu in the session waits for an answer: show it to the owner and ask,
   unless the answer is obvious and harmless.
 - The 5-hour limit message in a session: tell the owner; claude-swap may switch accounts by itself.
