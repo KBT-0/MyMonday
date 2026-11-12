@@ -44,6 +44,7 @@
 #   SERVER_TIMEZONE   default: UTC
 #   SWAP_SIZE         default: 2G
 #   MONSTER_HOST      default: MONSTER_TAILSCALE_IP (Monster on Tailscale); MONSTER_USER default: owner
+#   MONSTER_PHONE1/2  Tailscale IPs of the Wake-on-LAN phones at Monster's home (Termux sshd :8022)
 #
 # shellcheck disable=SC2016  # as_user bodies are single-quoted on purpose: they expand
 #                            # in the target user's shell ($HOME, $PATH), not root's.
@@ -488,15 +489,17 @@ phase_monster() {
   require_agent
   log "monster: ssh alias and skill for $AGENT_USER"
   local h host="${MONSTER_HOST:-MONSTER_TAILSCALE_IP}" user="${MONSTER_USER:-owner}"
+  local phone1="${MONSTER_PHONE1:-PHONE_TAILSCALE_IP}" phone2="${MONSTER_PHONE2:-0.0.0.0}"
   h="$(home_of "$AGENT_USER")"
   install -d -m 700 -o "$AGENT_USER" -g "$AGENT_USER" "$h/.hermes/skills/monster"
   install -m 644 -o "$AGENT_USER" -g "$AGENT_USER" "$SCRIPT_DIR/hermes/skills/monster/SKILL.md" \
     "$h/.hermes/skills/monster/SKILL.md"
+  install -m 755 "$SCRIPT_DIR/monster/monster-wake" /usr/local/bin/monster-wake
   as_agent '
     set -euo pipefail
     install -d -m 700 ~/.ssh
     [ -f ~/.ssh/id_ed25519_monster ] || ssh-keygen -q -t ed25519 -N "" -C monday@monday -f ~/.ssh/id_ed25519_monster
-    printf "Host monster\n  HostName %s\n  User %s\n  IdentityFile ~/.ssh/id_ed25519_monster\n  IdentitiesOnly yes\n  ConnectTimeout 10\n" '"$host"' '"$user"' > ~/.ssh/config
+    printf "Host monster\n  HostName %s\n  User %s\n\nHost monster-phone1\n  HostName %s\n  Port 8022\n\nHost monster-phone2\n  HostName %s\n  Port 8022\n\nHost monster monster-phone*\n  IdentityFile ~/.ssh/id_ed25519_monster\n  IdentitiesOnly yes\n  ConnectTimeout 10\n  StrictHostKeyChecking accept-new\n" '"$host"' '"$user"' '"$phone1"' '"$phone2"' > ~/.ssh/config
     chmod 600 ~/.ssh/config
     cat ~/.ssh/id_ed25519_monster.pub'
 }

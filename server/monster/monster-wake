@@ -1,0 +1,8 @@
+#!/usr/bin/env bash
+# monster-wake: ask a phone on Monster's home LAN to send the Wake-on-LAN packet.
+# Each phone's key entry is a forced command (wol.py), so the SSH call needs no command.
+# Phones are tried in order; ssh aliases come from the monster phase (~/.ssh/config).
+for h in ${MONSTER_WAKERS:-monster-phone1 monster-phone2}; do
+  ssh -o BatchMode=yes "$h" 2>/dev/null | grep -q "wake sent" && { echo "wake sent via $h"; exit 0; }
+done
+echo "no waker reachable" >&2; exit 1

@@ -119,7 +119,8 @@ inherit the parent's tools. That trade-off is documented rather than hidden.
 - [x] Encrypted restic backups to Cloudflare R2, root-only, with a documented restore path
 - [x] First backup run against the real R2 bucket
 - [x] Restricted SSH entry for a second machine (forced command, `monster/`)
-- [ ] Wake-on-LAN relay at the Monster site (old Android phones on the LAN)
+- [x] Wake-on-LAN relay at the Monster site: an old Android phone (Termux sshd, forced command)
+- [ ] Second phone as a backup waker
 - [x] Hetzner Cloud Firewall as a second layer in front of ufw (`server/hetzner/firewall.sh`)
 
 ## Repository layout
@@ -142,6 +143,8 @@ server/
   memory/
     brain-autocommit      hourly commit of the memory vault (runs as monday)
     brain-autocommit.*    systemd user service + timer
+  monster/
+    monster-wake          asks a phone on Monster's LAN to send Wake-on-LAN
   desktop/
     *.service             Xvfb, x11vnc, noVNC, Chromium, Hermes WebUI (systemd user units)
 monster/                  the owner's workstation (CachyOS, home city), driven by Monday
