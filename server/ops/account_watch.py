@@ -9,7 +9,7 @@ forced command. Policy (all in local.env):
   ACCOUNT_5H_MAX / ACCOUNT_7D_MAX   usage % at which the active account counts as nearly spent (95 / 97)
   ACCOUNT_HARD    usage % that makes a switch urgent: done at once, mid-turn (99)
 A switch moves every running claude on its next request and throws away each lead's cached context,
-which is real cost (Kemal: "context yeniden üretilir, gereksiz maliyet"). So outside a genuinely urgent
+which is real, avoidable cost. So outside a genuinely urgent
 case (ACCOUNT_HARD reached, or the account's login is broken and it cannot be used at all) this script
 never switches by itself: it writes state/account_switch_needed.json and sends ONE notice. A monitored
 Hermes cron job (see workstation skill, references/leads-system.md "Account switch, non-urgent") then
