@@ -1,0 +1,6 @@
+#!/data/data/com.termux/files/usr/bin/sh
+# Termux:Boot script (~/.termux/boot/start-sshd): keep the CPU awake and start sshd when the phone boots.
+# Installed by setup.sh. Logs: ~/.termux/boot.log
+termux-wake-lock
+sshd
+echo "$(date '+%F %T') sshd started" >> "$HOME/.termux/boot.log"
