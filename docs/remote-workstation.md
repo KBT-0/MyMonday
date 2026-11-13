@@ -65,6 +65,13 @@ in sessions running as the owner: a Claude Code prompt, the login shell of a hel
 exits, and `send --allow-bang` text runs as a shell command on purpose. The key is effectively a shell
 as the owner (see Security model).
 
+Owner-specific verbs that do not belong in this repo are extensions: an executable
+`/etc/workstation-ctl.d/<verb>` (verb `^[a-z][a-z0-9-]{0,30}$`) runs for any verb that is not built in, with
+the remaining words as arguments, stdin passed through and the same environment as built-in verbs.
+`workstation-ctl help` lists the installed ones. It runs only if the directory and the file are owned by
+root and not group- or world-writable, and the file is a regular executable (no symlink); otherwise the
+verb is unknown. `install-root.sh` creates the empty directory. An extension validates its own arguments.
+
 ## Power
 
 - **Wake:** `workstation-wake` asks the phone waker (Wake-on-LAN cannot cross the internet).
@@ -95,6 +102,10 @@ What the server's workstation key can do, by construction:
   enforced twice (sudoers regex + monday-root). Power off/reboot/suspend via sudo without password.
   Anything else needs the owner's password; `monday-grant <minutes>` lends password-less sudo for a
   limited time when the owner types it.
+- Extensions: only what root installed in `/etc/workstation-ctl.d`. The server's key cannot add or
+  change one (the directory and files must be root-owned and not writable by others), so it is an
+  extension point for the owner, not a way for the server to widen its own command surface. An extension
+  runs as the owner with the words the server sent: treat them as untrusted input.
 
 Mitigations: the owner is out of the `docker` group (= root); sudo needs the owner's password; leads
 work on branches and never push without the owner (a rule the assistant follows, not a hard control);

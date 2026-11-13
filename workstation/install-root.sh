@@ -12,6 +12,8 @@ install -o root -g root -m 755 "$here/monday-root" /usr/local/sbin/monday-root
 install -o root -g root -m 755 "$here/workstation-ctl" /usr/local/bin/workstation-ctl
 
 install -d -o root -g root -m 755 /etc/monday-root
+# owner-specific workstation-ctl verbs (not in this repo): root-owned executables, see docs/remote-workstation.md
+install -d -o root -g root -m 755 /etc/workstation-ctl.d
 [ -e /etc/monday-root/packages.allow ] || install -o root -g root -m 644 /dev/null /etc/monday-root/packages.allow
 [ -e /etc/monday-root/services.allow ] || { printf 'docker\ntailscaled\n' > /etc/monday-root/services.allow
   chown root:root /etc/monday-root/services.allow; chmod 644 /etc/monday-root/services.allow; }

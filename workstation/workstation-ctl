@@ -24,7 +24,21 @@
 #                           | rm NAME | set NAME k=v... | up [NAME] | unpark NAME|all | check NAME
 #                           | park NAME|all [HANDOFF] [--force] | mode NAME away|present | stopall
 #                           | power-check | events [OFFSET] | viewers | ccgram status|restart
+#   help                    this text and the extension verbs installed on this machine
+#   <verb> [args...]        extension: /etc/workstation-ctl.d/<verb> (verb ^[a-z][a-z0-9-]{0,30}$, not a
+#                           built-in), run only if the directory and the file are owned by root, not group-
+#                           or world-writable, and the file is a regular executable (no symlink); it gets
+#                           the remaining words as arguments, stdin, and the environment of built-in verbs
 set -euo pipefail
+
+# extension verbs: root-installed only, so the server (whose key is limited to this command) cannot add
+# any. WORKSTATION_CTL_TEST_EXT_DIR exists for test-leads.sh only: read from the caller's environment
+# before workstation.env is loaded, never under --ssh, and then the files must belong to the caller.
+ext_dir=/etc/workstation-ctl.d ext_uid=0
+if [ "${1:-}" != --ssh ] && [ -n "${WORKSTATION_CTL_TEST_EXT_DIR:-}" ]; then
+  ext_dir=$WORKSTATION_CTL_TEST_EXT_DIR ext_uid=$(id -u)
+fi
+unset WORKSTATION_CTL_TEST_EXT_DIR
 
 # personal values (WORKSTATION_DEV, LEADS_KIT_*, LEADS_SOCKET): ~/.config/monday/workstation.env, written
 # by install-user.sh from the repo's local.env; variables already in the environment win.
@@ -42,6 +56,31 @@ target() {
   if t list-windows -t =leads -F '#W' 2>/dev/null | grep -qxF -- "$1"; then echo "=leads:=$1"
   elif t has-session -t "=$1" 2>/dev/null; then echo "=$1:"
   else echo "no lead or session: $1" >&2; exit 2; fi
+}
+
+# ext_ok <path>: owned by ext_uid, not group/world-writable (no 022 bits), and for a file: regular,
+# not a symlink, executable
+ext_ok() {
+  local st
+  [ ! -L "$1" ] || return 1
+  st=$(stat -c '%u %a' -- "$1" 2>/dev/null) || return 1
+  [ "${st% *}" = "$ext_uid" ] && (( (8#${st#* } & 8#022) == 0 )) || return 1
+  [ -d "$1" ] || { [ -f "$1" ] && [ -x "$1" ]; }
+}
+# ext_verb <verb>: path of a valid extension, else nothing (and status 1); built-in verbs (keep in step
+# with the case below) are never extensions
+builtins=" status projects ls start read send answer key stop off reboot sleep root lead help "
+ext_verb() {
+  [[ "$1" =~ ^[a-z][a-z0-9-]{0,30}$ && "$builtins" != *" $1 "* ]] && ext_ok "$ext_dir" && ext_ok "$ext_dir/$1" || return 1
+  echo "$ext_dir/$1"
+}
+usage() {
+  awk 'NR > 1 { if (!/^#/) exit; sub(/^# ?/, ""); print }' "$0"
+  local f exts=""
+  for f in "$ext_dir"/*; do
+    [ -e "$f" ] && ext_verb "${f##*/}" >/dev/null && exts+=" ${f##*/}"
+  done
+  echo "extension verbs (${ext_dir}):${exts:- none}"
 }
 
 # --ssh: called by sshd; the words of the client's command become the arguments (no re-exec: no loop)
@@ -128,5 +167,9 @@ case "$cmd" in
       [[ "$w" =~ ^[A-Za-z0-9_][A-Za-z0-9_./=:+-]{0,200}$ || "$w" = --force || "$w" = --json ]] || { echo "bad argument: $w" >&2; exit 2; }
     done
     exec "$HOME/bin/monday-leads" "$@" ;;
-  *) sed -n '2,25p' "$0" | sed 's/^# \{0,1\}//'; exit 2 ;;
+  help) usage ;;
+  *)
+    # built-in names never reach here, so an extension cannot shadow one
+    if ext=$(ext_verb "$cmd"); then exec "$ext" "$@"; fi
+    usage; exit 2 ;;
 esac

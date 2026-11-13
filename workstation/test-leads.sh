@@ -334,4 +334,31 @@ has "lead-attach: socket from the file" "$(cfg bash -x "$here/lead-attach" 2>&1)
 sed -i '/^LEADS_SOCKET=/d' "$h2/.config/monday/workstation.env"
 is "monday-leads: default socket" "$(ml)" "$T/newdev leads"
 
+echo "== workstation-ctl extensions (/etc/workstation-ctl.d; a test directory owned by this user)"
+E=$T/ext; mkdir -p "$E"; chmod 755 "$E"
+# shellcheck disable=SC2016  # expanded by the extension script, not here
+printf '#!/bin/sh\necho "hello $* $(cat) dev=$WORKSTATION_DEV"\n' > "$E/hello"; chmod 755 "$E/hello"
+printf '#!/bin/sh\necho EXT-STATUS\n' > "$E/status"; chmod 755 "$E/status"
+X() { WORKSTATION_CTL_TEST_EXT_DIR=$E "$here/workstation-ctl" "$@" 2>&1; echo "exit $?"; }
+is "extension runs: args, stdin, environment" "$(echo in | X hello a b)" "hello a b in dev=$WORKSTATION_DEV
+exit 0"
+out=$(X help); is "help lists extensions, not built-in names" "$(grep '^extension verbs' <<<"$out")" "extension verbs ($E): hello"
+has "help exit 0" "$out" "exit 0"
+hasnt "a built-in verb is never shadowed" "$(X status)" "EXT-STATUS"
+out=$(X nosuch); has "unknown verb: usage" "$out" "extension verbs"; has "unknown verb: exit 2" "$out" "exit 2"
+cp -p "$E/hello" "$E/Hello"; has "verb outside ^[a-z][a-z0-9-]{0,30}\$ refused" "$(X Hello)" "exit 2"; rm "$E/Hello"
+chmod 775 "$E/hello"; has "group-writable file refused" "$(echo x | X hello)" "exit 2"
+chmod 757 "$E/hello"; has "world-writable file refused" "$(echo x | X hello)" "exit 2"
+chmod 644 "$E/hello"; has "non-executable file refused" "$(echo x | X hello)" "exit 2"; chmod 755 "$E/hello"
+ln -s hello "$E/link"; has "symlink refused" "$(echo x | X link)" "exit 2"
+hasnt "symlink not listed" "$(X help | grep '^extension verbs')" "link"; rm "$E/link"
+mkdir "$E/sub"; has "directory refused" "$(X sub)" "exit 2"; rmdir "$E/sub"
+chmod 775 "$E"; has "group-writable directory refused" "$(echo x | X hello)" "exit 2"; chmod 755 "$E"
+is "test directory ignored under --ssh" \
+  "$(echo x | SSH_ORIGINAL_COMMAND=hello WORKSTATION_CTL_TEST_EXT_DIR=$E "$here/workstation-ctl" --ssh 2>&1 | grep -c '^hello')" 0
+echo "WORKSTATION_CTL_TEST_EXT_DIR=$E" >> "$h2/.config/monday/workstation.env"
+hasnt "test directory ignored in workstation.env" "$(echo x | cfg "$here/workstation-ctl" hello)" "hello"
+is "sanity: valid again" "$(echo in | X hello)" "hello  in dev=$WORKSTATION_DEV
+exit 0"
+
 exit $fail
