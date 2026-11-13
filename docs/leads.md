@@ -118,4 +118,15 @@ working it waits up to `ACCOUNT_WAIT_MIN`, unless the active account is at `ACCO
 every running claude on its next request, so it also costs the prompt cache of long contexts, which is why
 it waits for a boundary. `ACCOUNTS_ASK` accounts (company seats, shared plans) are never switched to by the
 job: the owner gets one message per episode listing them with their usage, and the assistant switches on
-his word. With nothing left anywhere, one message says the leads will stop at the limit.
+his word. With nothing left anywhere, one message says the leads will stop at the limit. `ACCOUNT_PROTECT` (e.g. the
+owner's own account) caps that account lower and, once it is left, excludes it from future switches for
+good (kept in `state/account_watch.json`, not just the current episode) until the owner says to use it
+again: it is never drained to 0% just because nothing else happens to be free.
+
+Outside a genuinely urgent case (`ACCOUNT_HARD` reached, or the account's login is broken) a switch is
+never done by this cron job alone: every running claude would re-send its whole context to the new
+account on its next request, which is real, avoidable cost. Instead it writes
+`state/account_switch_needed.json` and a monitored Hermes job drives the handoff: ask every active lead to
+prepare one and wait, switch the account, then `/clear` + paste each lead's own handoff prompt so the new
+account's context is rebuilt only from that summary. The same job also checks that each resumed lead is
+actually making progress afterwards, not stuck at a prompt or a question it did not ask for.

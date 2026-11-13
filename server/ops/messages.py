@@ -22,7 +22,9 @@ MESSAGES = {
         "lead_crashed": "[{lead}] ⚪ claude is no longer running (no session-end event: crashed or killed)",
         "ssh_broken": "lead_watch: the workstation is online on the tailnet but ssh has failed for {mins} minutes. Needs a look.",
         # account_watch
-        "acct_switched": "🔄 Claude account {old} → {new} (was 5h {o5:.0f}% / 7d {o7:.0f}%; new 5h {n5:.0f}% / 7d {n7:.0f}%). Running leads move on their next request.",
+        "acct_switched_urgent": "🔄 (urgent) Claude account {old} → {new} (was 5h {o5:.0f}% / 7d {o7:.0f}%; new 5h {n5:.0f}% / 7d {n7:.0f}%). Running leads move on their next request.",
+        "acct_reserved": "🔒 Claude account {accts} reached its cap: kept in reserve, never switched back into automatically until you say so.",
+        "acct_plan": "⚠️ Claude account {old} is nearing its limit (5h {o5:.0f}% / 7d {o7:.0f}%; account {new} has quota). Not urgent, so no switch yet: a handoff on every lead, then the switch, then /clear + resume, comes next from the scheduled job.",
         "acct_switch_failed": "⚠️ Claude account switch to {new} failed: {err}",
         "acct_ask": "⚠️ Claude account {old} is nearly spent (5h {o5:.0f}% / 7d {o7:.0f}%) and no automatic account has quota left. Accounts that need your OK: {opts}. Say which one to use.",
         "acct_stuck": "⛔ Claude account {old} is nearly spent (5h {o5:.0f}% / 7d {o7:.0f}%) and no other account has quota left: leads will stop at the limit.",
@@ -50,7 +52,9 @@ MESSAGES = {
         "lead_crashed": "[{lead}] ⚪ claude artık çalışmıyor (oturum kapanış olayı yok: çöktü ya da sonlandırıldı)",
         "ssh_broken": "lead_watch: iş istasyonu tailnet'te çevrimiçi ama ssh {mins} dakikadır başarısız. Kontrol gerekiyor.",
         # account_watch
-        "acct_switched": "🔄 Claude hesabı {old} → {new} (eski 5h %{o5:.0f} / 7d %{o7:.0f}; yeni 5h %{n5:.0f} / 7d %{n7:.0f}). Çalışan lead'ler bir sonraki istekte yeni hesaba geçer.",
+        "acct_switched_urgent": "🔄 (acil) Claude hesabı {old} → {new} (eski 5h %{o5:.0f} / 7d %{o7:.0f}; yeni 5h %{n5:.0f} / 7d %{n7:.0f}). Çalışan lead'ler bir sonraki istekte yeni hesaba geçer.",
+        "acct_reserved": "🔒 Claude hesabı {accts} sınırına geldi: bundan sonra kullanılmıyor, sen söylemeden otomatik olarak bir daha ona geçmeyeceğim.",
+        "acct_plan": "⚠️ Claude hesabı {old} limite yaklaşıyor (5h %{o5:.0f} / 7d %{o7:.0f}; {new} numaralı hesapta kota var). Acil değil, bu yüzden hemen geçmiyorum: önce her lead'den handoff istenecek, sonra hesap değiştirilecek, sonra /clear + devam promptu ile açılacak. Bunu planlanmış görev yapacak.",
         "acct_switch_failed": "⚠️ Claude hesabı {new}'e geçilemedi: {err}",
         "acct_ask": "⚠️ Claude hesabı {old} dolmak üzere (5h %{o5:.0f} / 7d %{o7:.0f}) ve otomatik geçebileceğim hesapta kota kalmadı. Onayınla kullanılabilecekler: {opts}. Hangisine geçeyim?",
         "acct_stuck": "⛔ Claude hesabı {old} dolmak üzere (5h %{o5:.0f} / 7d %{o7:.0f}) ve kotası olan başka hesap yok: lead'ler limitte duracak.",
