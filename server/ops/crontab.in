@@ -1,0 +1,4 @@
+# BEGIN MyMonday ops (managed by `bootstrap.sh <admin> ops`; edits inside this block are replaced)
+# Lead notifications from the workstation: every minute, all week
+* * * * * /usr/bin/timeout 50 /usr/bin/python3 @OPS_DIR@/lead_watch.py >> @OPS_DIR@/state/lead_watch.log 2>&1
+# END MyMonday ops
