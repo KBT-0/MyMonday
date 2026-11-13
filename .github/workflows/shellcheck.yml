@@ -7,15 +7,48 @@ on:
 permissions:
   contents: read
 
+env:
+  GITLEAKS_VERSION: 8.30.1
+  GITLEAKS_SHA256: 551f6fc83ea457d62a0d98237cbad105af8d557003051f41f3e7ca7b3f2470eb  # linux_x64
+
 jobs:
   shellcheck:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          fetch-depth: 0
       - name: Lint shell scripts
         run: |
           # Every file with a bash shebang, with or without a .sh extension.
-          grep -rlE --exclude-dir=.git '^#!/usr/bin/env bash' . | xargs shellcheck -S style
+          grep -rlE --exclude-dir=.git '^#!(/usr/bin/env bash|/bin/bash)' . | xargs shellcheck -S style
+          shellcheck -s bash -S style monster/lead-env
+      - name: Syntax checks (bash, sh, zsh, Python)
+        run: |
+          sudo apt-get update -qq && sudo apt-get install -y -qq zsh >/dev/null
+          grep -rlE --exclude-dir=.git '^#!(/usr/bin/env bash|/bin/bash)' . | xargs -n1 bash -n
+          grep -rlE --exclude-dir=.git '^#!/bin/sh' . | xargs -r -n1 sh -n
+          grep -rlE --exclude-dir=.git '^#!/bin/zsh' . | xargs -r -n1 zsh -n
+          python3 -m py_compile monster/monday-leads monster/ccgram-patches/check.py server/ops/*.py clients/phone-waker/wol.py
       - name: Validate JSON
         run: |
           find . -name '*.json' -not -path './.git/*' -print0 | xargs -0 -n1 jq empty
+      - name: Unit tests (lead_watch)
+        run: python3 -m unittest discover -s server/ops/tests -v
+      - name: Workstation tests (fake claude, private tmux socket)
+        run: |
+          sudo apt-get update -qq && sudo apt-get install -y -qq tmux >/dev/null
+          bash monster/test-monday-root.sh
+          # the viewer tests need a terminal-like pty (script(1)) and may fail on a runner: reported, not fatal
+          bash monster/test-leads.sh | tee /tmp/leads.log || true
+          grep -q '^ok   idle only: sleep reached systemctl' /tmp/leads.log
+          ! grep '^FAIL' /tmp/leads.log | grep -v viewer
+      - name: Personal values (no-op without local.env / .private-strings)
+        run: bash scripts/check-private.sh
+      - name: gitleaks (pinned, sha256-checked)
+        run: |
+          curl -fsSL -o /tmp/gl.tgz "https://github.com/gitleaks/gitleaks/releases/download/v${GITLEAKS_VERSION}/gitleaks_${GITLEAKS_VERSION}_linux_x64.tar.gz"
+          echo "${GITLEAKS_SHA256}  /tmp/gl.tgz" | sha256sum -c -
+          tar -xzf /tmp/gl.tgz -C /tmp gitleaks
+          /tmp/gitleaks git . --no-banner --redact
+          /tmp/gitleaks dir . --no-banner --redact
