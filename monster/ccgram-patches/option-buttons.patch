@@ -1,0 +1,127 @@
+diff -ru a/ccgram/handlers/interactive/interactive_ui.py b/ccgram/handlers/interactive/interactive_ui.py
+--- a/ccgram/handlers/interactive/interactive_ui.py
++++ b/ccgram/handlers/interactive/interactive_ui.py
+@@ -125,6 +125,12 @@
+ _MULTI_SELECT_RE = re.compile(
+     r"(?i)\b(?:select|choose|pick)\b[^\n]*(?:all|multiple|more than one)\b"
+ )
++# monster patch: Claude Code menus (tab header "☐ X", indented descriptions,
++# a ──── rule before "Chat about this", "[ ]" checkboxes for multiSelect).
++_SEPARATOR_RE = re.compile(r"^\s*[─━]{3,}\s*$")
++_OPTION_GLYPH_RE = re.compile(r"(?m)^\s*(?:[←→❯>]\s*)?\d+\.\s+[☐☑]")
++_CHECKBOX_LABEL_RE = re.compile(r"^\d+ · \[[ ✔✓x×]\]")
++_EXTRA_CHOICE_RE = re.compile(r"(?i)^\d+ · (?:\[.\] )?(?:type something|chat about this)")
+ 
+ 
+ def _interactive_key(
+@@ -303,13 +309,16 @@
+             ):
+                 index += 1
+                 continue
++            if _SEPARATOR_RE.fullmatch(lines[index]):
++                index += 1
++                continue
+             option = _NUMBERED_OPTION_RE.fullmatch(lines[index])
+             if option is None:
+                 break
+             number, label = option.groups()
+             if int(number) != expected:
+                 break
+-            choices.append((number, f"{number}. {label}"))
++            choices.append((number, f"{number} · {label}"))
+             expected += 1
+             index += 1
+ 
+@@ -329,14 +338,11 @@
+     prevents unrelated numbered prose elsewhere in a terminal capture from
+     becoming one-tap input. Explicit multi-select prompts never get buttons.
+     """
+-    if "☐" in content or "☑" in content or _MULTI_SELECT_RE.search(content):
++    if _OPTION_GLYPH_RE.search(content) or _MULTI_SELECT_RE.search(content):
+         return ()
+ 
+     lines = content.splitlines()
+-    blocks = _numbered_menu_blocks(
+-        lines,
+-        allow_descriptions=any(line.strip() == PI_QUESTION_FOOTER for line in lines),
+-    )
++    blocks = _numbered_menu_blocks(lines, allow_descriptions=True)
+     anchors = [
+         index
+         for index, line in enumerate(lines)
+@@ -550,12 +556,21 @@
+         return InlineKeyboardMarkup([[btn("🔄", CB_ASK_REFRESH)]])
+ 
+     rows: list[list[InlineKeyboardButton]] = []
+-    # Direct choices come first, while the complete navigation keyboard remains
+-    # available for multi-select and unrecognised prompts.
+-    for start in range(0, len(direct_choices), 2):
+-        rows.append(
+-            [choice_btn(key, label) for key, label in direct_choices[start : start + 2]]
+-        )
++    # monster patch: one full-width button per option; "Type something" /
++    # "Chat about this" share the last row with Esc and refresh. Checkbox
++    # menus (multiSelect) keep the full navigation keyboard for Submit.
++    if direct_choices:
++        main = [c for c in direct_choices if not _EXTRA_CHOICE_RE.match(c[1])]
++        extra = [c for c in direct_choices if _EXTRA_CHOICE_RE.match(c[1])]
++        checkbox = any(_CHECKBOX_LABEL_RE.match(label) for _, label in direct_choices)
++        rows.extend([choice_btn(key, label)] for key, label in main)
++        tail = [choice_btn(key, label) for key, label in extra]
++        if not checkbox:
++            tail += [btn("⎋ Esc", CB_ASK_ESC), btn("🔄", CB_ASK_REFRESH)]
++        if tail:
++            rows.append(tail)
++        if not checkbox:
++            return InlineKeyboardMarkup(rows)
+     # Row 1: directional keys
+     rows.append(
+         [
+@@ -868,16 +883,25 @@
+     _send_cooldowns[ikey] = now
+     # Send as plain text — terminal content should not be formatted.
+     await rate_limit_send(resolved_chat_id)
+-    sent = await _send_interactive_with_retry(
+-        client,
+-        chat_id=resolved_chat_id,
+-        text=text,
+-        keyboard=keyboard,
+-        thread_kwargs=thread_kwargs,
+-        ikey=ikey,
+-        thread_id=thread_id,
+-        window_id=window_id,
+-        now=now,
++    # monster patch: a blocked agent's prompt goes ahead of background traffic
++    from ...telegram_rate_limiter import interactive_priority
++
++    with interactive_priority():
++        sent = await _send_interactive_with_retry(
++            client,
++            chat_id=resolved_chat_id,
++            text=text,
++            keyboard=keyboard,
++            thread_kwargs=thread_kwargs,
++            ikey=ikey,
++            thread_id=thread_id,
++            window_id=window_id,
++            now=now,
++        )
++    logger.info(
++        "monster: interactive UI keyboard window_id=%s buttons=%s",
++        window_id,
++        [b.text for row in keyboard.inline_keyboard for b in row],
+     )
+     if sent:
+         _interactive_msgs[ikey] = sent.message_id
+diff -ru a/ccgram/handlers/messaging_pipeline/message_routing.py b/ccgram/handlers/messaging_pipeline/message_routing.py
+--- a/ccgram/handlers/messaging_pipeline/message_routing.py
++++ b/ccgram/handlers/messaging_pipeline/message_routing.py
+@@ -39,7 +39,7 @@
+ # message_queue.py), so time is the only honest bound. Past this timeout we
+ # accept a possible reorder of the interactive UI relative to queued
+ # content, rather than stall monitor dispatch for every other session.
+-_INTERACTIVE_QUEUE_JOIN_TIMEOUT_S = 90.0
++_INTERACTIVE_QUEUE_JOIN_TIMEOUT_S = 5.0  # monster patch: a rate-limited queue held prompts ~90s
+ 
+ # One draft per session/topic. Provider updates are cumulative snapshots, not deltas.
+ _DRAFT_TTL_SECONDS = 25.0

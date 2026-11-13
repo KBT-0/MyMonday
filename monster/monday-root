@@ -1,0 +1,38 @@
+#!/bin/bash
+# monday-root: the only root actions Monday may take on Monster (sudo, from monster-ctl).
+# Installed as /usr/local/sbin/monday-root, root:root 755. Names must be listed, one per line:
+#   pkg-install <package>      /etc/monday-root/packages.allow -> pacman -S --needed --noconfirm
+#   service-restart <service>  /etc/monday-root/services.allow -> systemctl restart
+# Not root: dry run against the lists in $MONDAY_ROOT_ALLOW (tests), nothing is executed.
+set -euo pipefail
+# fixed PATH (sudo's secure_path for this command sets the same): id, logger, grep are never looked up
+# in a caller-controlled directory
+PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin; export PATH
+
+if [ "$(id -u)" = 0 ]; then
+  allow=/etc/monday-root
+  run() { "$@"; }
+  log() { logger -t monday-root -- "$*"; }
+else
+  allow=${MONDAY_ROOT_ALLOW:?not root: set MONDAY_ROOT_ALLOW to a folder of test lists for a dry run}
+  run() { echo "dry run: $*"; }
+  log() { echo "log: $*" >&2; }
+fi
+
+# %q: arguments are untrusted, keep newlines and control characters out of the log
+log "call by ${SUDO_USER:-$(id -un)}: $(printf '%q ' "$@")"
+deny() { log "denied: $1"; echo "monday-root: $1" >&2; exit 2; }
+
+[ $# -eq 2 ] || deny "usage: monday-root pkg-install <package> | service-restart <service>"
+cmd=$1 name=$2
+case "$cmd" in
+  pkg-install)     list=packages.allow; act=(/usr/bin/pacman -S --needed --noconfirm -- "$name") ;;
+  service-restart) list=services.allow; act=(/usr/bin/systemctl restart -- "$name") ;;
+  *) deny "unknown command" ;;
+esac
+[[ "$name" =~ ^[a-z0-9][a-z0-9@._+-]*$ ]] || deny "bad name"
+grep -qxF -- "$name" "$allow/$list" 2>/dev/null || deny "$name not in $allow/$list"
+
+rc=0; run "${act[@]}" || rc=$?
+log "result: $cmd $name exit $rc"
+exit "$rc"

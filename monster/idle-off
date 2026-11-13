@@ -1,19 +1,36 @@
-#!/usr/bin/env bash
+#!/bin/bash
 # idle-off <owner> [minutes]: power Monster off when nothing has used it for <minutes> (default 1440 = 24 h).
-# Busy = a Monday/Claude tmux session, an open SSH connection, or the owner logged in at the
-# desktop. Runs every 5 min from monster-idle-off.timer, as root.
+# Busy = a lead or helper session whose pane runs a live claude (tmux -L monster; dead panes, viewers and
+# plain shells do not count), a running claude session/worker or held kit lock (monday-leads
+# power-check), an interactive SSH login (a pty) or a mosh session, or a graphical session (Wayland or
+# X11) of the owner that logind reports neither idle nor locked (IdleHint/LockedHint: set by the
+# desktop's idle daemon or screen locker; without one, a logged-in desktop always counts). Not busy: the server's per-minute `ssh monster lead events` poll (forced
+# command, no pty), CCGram's own process, an empty tmux server.
+# Runs every 5 min from monster-idle-off.timer, as root.
 set -euo pipefail
+PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
 owner=${1:?owner}; limit=$(( ${2:-1440} * 60 ))
 state=/run/monster-idle-off.last-busy   # /run is cleared on boot
 # awake seconds only (CLOCK_MONOTONIC stops while suspended), so days of sleep never count as idle
 now=$(python3 -c "import time; print(int(time.monotonic()))")
+home=$(getent passwd "$owner" | cut -d: -f6)
 
 busy=no
-runuser -u "$owner" -- tmux -L monster ls >/dev/null 2>&1 && busy=yes            # sessions
-pgrep -f '^sshd-session: [^ ]+@' >/dev/null 2>&1 && busy=yes                      # live SSH
-pgrep -f '^sshd: [^ ]+@' >/dev/null 2>&1 && busy=yes                              # older sshd naming
+# lead windows and helper sessions with claude in the foreground (same test as monday-leads)
+if runuser -u "$owner" -- tmux -L monster list-panes -a -F '#{session_name} #{pane_dead} #{pane_current_command}' 2>/dev/null \
+    | awk '$1 !~ /^view-/ && $2 == 0 && $3 == "claude" {f=1} END {exit !f}'; then busy=yes; fi
+# interactive logins: sshd names a pty session user@pts/N (the forced-command key has no pty: user@notty)
+pgrep -f '^sshd(-session)?: [^ ]+@pts/' >/dev/null 2>&1 && busy=yes
+pgrep -u "$owner" -x mosh-server >/dev/null 2>&1 && busy=yes
+# a running claude session or worker, or a held kit lock (monday-leads power-check; HOME: it reads ~/.claude)
+if [ -x "$home/bin/monday-leads" ]; then
+  runuser -u "$owner" -- env HOME="$home" "$home/bin/monday-leads" power-check >/dev/null 2>&1 || busy=yes
+fi
 for s in $(loginctl list-sessions --no-legend | awk -v u="$owner" '$3==u {print $1}'); do
-  [ "$(loginctl show-session "$s" -p Type --value)" = wayland ] && busy=yes       # desktop login
+  case $(loginctl show-session "$s" -p Type --value) in
+    wayland|x11) [ "$(loginctl show-session "$s" -p IdleHint --value)" = yes ] \
+                   || [ "$(loginctl show-session "$s" -p LockedHint --value)" = yes ] || busy=yes ;;
+  esac
 done
 
 if [ "$busy" = yes ] || [ ! -f "$state" ]; then echo "$now" > "$state"; exit 0; fi

@@ -1,42 +1,84 @@
 #!/usr/bin/env bash
 # monster-ctl: what Monday runs on Monster (forced command for Monday's SSH key).
-# Claude Code sessions live in the tmux server "monster", so the owner can attach to the
-# same sessions with `mon`.
+# Claude Code sessions live in the tmux server "monster", so the owner can attach with `mon`:
+# project leads are windows of the session "leads" (window = lead name), Monday's helper sessions
+# from `start` are sessions of their own. <name> below is a lead or a helper session.
 #
 #   status                  uptime, battery, load, sessions
-#   projects                folders in the owner's ~/projects
-#   ls                      tmux sessions
-#   start <name> [dir]      new session running claude (dir: project folder name or path)
-#   read <name> [lines]     last screen lines of a session (default 60)
-#   send <name>             type stdin into the session, then Enter
+#   projects                folders in the owner's projects root (MONSTER_DEV)
+#   ls                      tmux sessions (viewer sessions view-* of mon/mac-leads are hidden)
+#   start <name> [dir]      new helper session running claude (dir: project folder name or path)
+#   read <name> [lines]     last screen lines (default 60)
+#   send <name> [--allow-bang]  paste stdin (bracketed paste), then Enter; text starting with ! needs --allow-bang
+#   answer <name> <key>     exactly one key, no Enter: 1-9 y n Escape Enter Up Down Tab BTab
 #   key <name> <key...>     send tmux keys, e.g. Escape, C-c, Enter
-#   stop <name>             end the session
-#   sleep                   suspend Monster (sessions and open windows survive; WoL wakes it)
-#   off | reboot            power off / reboot Monster
+#   stop <name>             end a helper session; for a lead end claude, keep its window (use lead park)
+#   sleep [--force]         suspend Monster (sessions and open windows survive; WoL wakes it)
+#   off | reboot [--force]  power off / reboot Monster
+#                           off/reboot/sleep refuse while a claude session or worker works or waits on a
+#                           permission/question, or a kit lock is held (monday-leads power-check prints
+#                           what); idle sessions do not block (resumable); --force overrides
+#   root pkg-install <pkg>  install a package listed in /etc/monday-root/packages.allow
+#   root service-restart <svc>  restart a service listed in /etc/monday-root/services.allow
+#   lead <args...>          project leads via ~/bin/monday-leads: list | status --json | add NAME DIR [SID]
+#                           | rm NAME | set NAME k=v... | up [NAME] | unpark NAME|all | check NAME
+#                           | park NAME|all [HANDOFF] [--force] | mode NAME away|present | stopall
+#                           | power-check | events [OFFSET] | viewers | ccgram status|restart
 set -euo pipefail
 
+# personal values (MONSTER_DEV, LEADS_KIT_*): ~/.config/monday/monster.env, written by
+# install-user.sh from the repo's local.env; variables already in the environment win
+while IFS='=' read -r k v; do [ -n "${!k+x}" ] || export "$k=$v"; done \
+  < <(grep -E '^[A-Z_][A-Z0-9_]*=' "$HOME/.config/monday/monster.env" 2>/dev/null)
 DEV=${MONSTER_DEV:-$HOME/projects}
 CLAUDE=${MONSTER_CLAUDE:-$HOME/.local/bin/claude}
-t() { tmux -L monster "$@"; }
+t() { tmux -L "${LEADS_SOCKET:-monster}" -f "$HOME/.config/monday/lead-tmux.conf" "$@"; }
 name_ok() { [[ "$1" =~ ^[A-Za-z0-9_-]{1,32}$ ]] || { echo "bad session name: $1" >&2; exit 2; }; }
+ls_sessions() { t ls 2>/dev/null | grep -v '^view-' || echo "no sessions"; }
+# tmux target of <name>: the lead window leads:<name>, else the helper session <name>
+target() {
+  name_ok "$1"
+  if t list-windows -t =leads -F '#W' 2>/dev/null | grep -qxF -- "$1"; then echo "=leads:=$1"
+  elif t has-session -t "=$1" 2>/dev/null; then echo "=$1:"
+  else echo "no lead or session: $1" >&2; exit 2; fi
+}
 
-# --ssh: called by sshd; the words of the client's command become the arguments
-if [ "${1:-}" = --ssh ]; then read -ra a <<< "${SSH_ORIGINAL_COMMAND:-status}"; exec "$0" "${a[@]}"; fi
+# --ssh: called by sshd; the words of the client's command become the arguments (no re-exec: no loop)
+if [ "${1:-}" = --ssh ]; then
+  read -ra a <<< "${SSH_ORIGINAL_COMMAND:-status}"; set -- "${a[@]}"
+  [ "${1:-}" != --ssh ] || { echo "bad command" >&2; exit 2; }
+fi
 cmd=${1:-status}; shift || true
+# what a power change would cut; --force skips the check
+power_ok() {
+  [ "${1:-}" = --force ] && return 0
+  [ $# -eq 0 ] || { echo "usage: $cmd [--force]" >&2; exit 2; }
+  out=$("$HOME/bin/monday-leads" power-check 2>&1) && { echo "$out"; return 0; }  # idle sessions: listed only
+  printf 'refused: %s would cut running work (add --force to override):\n%s\n' "$cmd" "$out" >&2; exit 1
+}
+# journald: verb and names only, never the text sent
+log=$cmd; for w in "${@:1:2}"; do [[ "$w" =~ ^[A-Za-z0-9_-]{1,32}$ ]] && log+=" $w"; done
+logger -t monster-ctl -- "$log" 2>/dev/null || true
 case "$cmd" in
   status)
-    uptime -p; cat /sys/class/power_supply/BAT0/capacity /sys/class/power_supply/AC0/online 2>/dev/null \
-      | paste -sd' ' | awk '{print "battery " $1 "%, on AC: " ($2==1?"yes":"no")}'
+    uptime -p
+    # battery line only on machines with one (any BAT*/AC*/ADP* name); a desktop prints none
+    bat=$(cat /sys/class/power_supply/BAT*/capacity 2>/dev/null | head -n 1 || true)
+    ac=$(cat /sys/class/power_supply/{AC,ADP}*/online 2>/dev/null | head -n 1 || true)
+    [ -z "$bat" ] || echo "battery ${bat}%, on AC: $([ "$ac" = 1 ] && echo yes || echo no)"
     cut -d' ' -f1-3 /proc/loadavg
-    # the owner's own desktop login (open windows, maybe work resumed from sleep)
-    for s in $(loginctl list-sessions --no-legend | awk -v u="$USER" '$3==u {print $1}'); do
-      [ "$(loginctl show-session "$s" -p Type --value)" = wayland ] && echo "DESKTOP: the owner is logged in (open work)"
+    # the owner's own graphical login, Wayland or X11 (open windows, maybe work resumed from sleep)
+    for s in $(loginctl list-sessions --no-legend 2>/dev/null | awk -v u="$USER" '$3==u {print $1}'); do
+      case $(loginctl show-session "$s" -p Type --value 2>/dev/null) in
+        wayland|x11) echo "DESKTOP: owner is logged in (open work)"; break ;;
+      esac
     done
-    t ls 2>/dev/null || echo "no sessions" ;;
+    ls_sessions ;;
   projects) ls -1 "$DEV" ;;
-  ls) t ls 2>/dev/null || echo "no sessions" ;;
+  ls) ls_sessions ;;
   start)
     name_ok "${1:?name}"; d=${2:-$1}; [[ "$d" = /* ]] || d="$DEV/$d"
+    [[ "$1" != leads && "$1" != view-* ]] || { echo "leads and view-* are reserved (lead session, viewers)" >&2; exit 2; }
     [ -d "$d" ] || { echo "no such folder: $d" >&2; exit 2; }
     t has-session -t "=$1" 2>/dev/null && { echo "session $1 already running"; exit 0; }
     # a normal login shell (PATH, fnm, cswap as in a terminal), then claude in it; the shell
@@ -44,14 +86,46 @@ case "$cmd" in
     t new-session -d -s "$1" -c "$d" -x 220 -y 50
     sleep 1; t send-keys -t "=$1:" -l -- "$CLAUDE"; t send-keys -t "=$1:" Enter
     echo "started $1 in $d" ;;
-  read) name_ok "${1:?name}"; t capture-pane -p -J -t "=$1:" -S "-${2:-60}" ;;
+  read)
+    [[ "${2:-60}" =~ ^[0-9]{1,6}$ ]] || { echo "lines: a number" >&2; exit 2; }
+    tg=$(target "${1:?name}"); t capture-pane -p -J -t "$tg" -S "-${2:-60}" ;;
   send)
-    name_ok "${1:?name}"; text=$(cat); [ -n "$text" ] || { echo "nothing on stdin" >&2; exit 2; }
-    t send-keys -t "=$1:" -l -- "$text"; sleep 0.3; t send-keys -t "=$1:" Enter; echo sent ;;
-  key) name_ok "${1:?name}"; s=$1; shift; t send-keys -t "=$s:" "$@"; echo sent ;;
-  stop) name_ok "${1:?name}"; t kill-session -t "=$1"; echo "stopped $1" ;;
-  off) t kill-server 2>/dev/null || true; sudo -n /usr/bin/systemctl poweroff ;;
-  reboot) sudo -n /usr/bin/systemctl reboot ;;
-  sleep) sudo -n /usr/bin/systemctl suspend ;;
-  *) sed -n '2,15p' "$0" | sed 's/^# \{0,1\}//'; exit 2 ;;
+    tg=$(target "${1:?name}"); [ $# -eq 1 ] || [ "$*" = "$1 --allow-bang" ] || { echo "usage: send <name> [--allow-bang]" >&2; exit 2; }
+    text=$(cat); [ -n "$text" ] || { echo "nothing on stdin" >&2; exit 2; }
+    # a leading ! puts Claude Code into shell mode: the text would run as a command
+    [[ "${text#"${text%%[![:space:]]*}"}" != '!'* ]] || [ "${2:-}" = --allow-bang ] \
+      || { echo "refused: text starts with '!' (shell mode); add --allow-bang" >&2; exit 2; }
+    buf=monster-ctl-$$
+    printf '%s' "$text" | t load-buffer -b "$buf" -
+    t paste-buffer -p -d -b "$buf" -t "$tg"; sleep 0.3; t send-keys -t "$tg" Enter; echo sent ;;
+  answer)
+    tg=$(target "${1:?name}"); [ $# -eq 2 ] && [[ "$2" =~ ^([1-9]|y|n|Escape|Enter|Up|Down|Tab|BTab)$ ]] \
+      || { echo "usage: answer <name> 1-9|y|n|Escape|Enter|Up|Down|Tab|BTab" >&2; exit 2; }
+    t send-keys -t "$tg" "$2"; echo sent ;;
+  key)
+    tg=$(target "${1:?name}"); shift
+    for k in "$@"; do [[ "$k" != -* ]] || { echo "bad key: $k" >&2; exit 2; }; done
+    [ $# -gt 0 ] || { echo "usage: key <name> <key...>" >&2; exit 2; }
+    t send-keys -t "$tg" "$@"; echo sent ;;
+  stop)
+    tg=$(target "${1:?name}")
+    if [[ "$tg" = =leads:* ]]; then t respawn-pane -k -t "$tg" printf '%s\n' "stopped by monster-ctl; monday-leads up $1"
+    else t kill-session -t "=$1"; fi
+    echo "stopped $1" ;;
+  off) power_ok "$@"; t kill-server 2>/dev/null || true; sudo -n /usr/bin/systemctl poweroff ;;
+  reboot) power_ok "$@"; sudo -n /usr/bin/systemctl reboot ;;
+  sleep) power_ok "$@"; sudo -n /usr/bin/systemctl suspend ;;
+  root)
+    [ $# -eq 2 ] && [[ "$1" = pkg-install || "$1" = service-restart ]] \
+      || { echo "usage: root pkg-install <package> | root service-restart <service>" >&2; exit 2; }
+    sudo -n /usr/local/sbin/monday-root "$1" "$2" ;;
+  lead)
+    # exec without a shell; every word is checked, so no injection (names are checked again in monday-leads)
+    [[ "${1:-}" =~ ^(list|status|add|rm|set|up|unpark|check|park|mode|stopall|power-check|events|viewers|ccgram)$ ]] \
+      || { echo "usage: lead list|status|add|rm|set|up|unpark|check|park|mode|stopall|power-check|events|viewers|ccgram ..." >&2; exit 2; }
+    for w in "$@"; do
+      [[ "$w" =~ ^[A-Za-z0-9_][A-Za-z0-9_./=:+-]{0,200}$ || "$w" = --force || "$w" = --json ]] || { echo "bad argument: $w" >&2; exit 2; }
+    done
+    exec "$HOME/bin/monday-leads" "$@" ;;
+  *) sed -n '2,25p' "$0" | sed 's/^# \{0,1\}//'; exit 2 ;;
 esac

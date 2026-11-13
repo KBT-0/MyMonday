@@ -1,0 +1,32 @@
+# lead-env: sourced (bash) right before claude starts in a lead window (installed to ~/.config/monday/lead-env).
+# The tmux server may come from systemd or Monday's SSH, not a terminal: rebuild what a kitty session has.
+# Variable names and discovery only, never values or secrets.
+# PATH: ~/.local/bin (claude, cswap/claude-swap), ~/bin (monday-leads), node/npm from fnm's default alias
+fnm_bin=${FNM_DIR:-$HOME/.local/share/fnm}/aliases/default/bin
+for d in "$fnm_bin" "$HOME/bin" "$HOME/.local/bin"; do
+  [ -d "$d" ] && case ":$PATH:" in *":$d:"*) ;; *) PATH=$d:$PATH ;; esac
+done
+export PATH
+unset fnm_bin d
+# the owner's ssh-agent (git push over ssh): keep a live one, else the systemd user ssh-agent socket
+export XDG_RUNTIME_DIR=${XDG_RUNTIME_DIR:-/run/user/$(id -u)}
+if [ ! -S "${SSH_AUTH_SOCK:-}" ]; then
+  for s in "$XDG_RUNTIME_DIR/ssh-agent.socket" "$XDG_RUNTIME_DIR/gcr/ssh" "$XDG_RUNTIME_DIR/keyring/ssh"; do
+    [ -S "$s" ] && { export SSH_AUTH_SOCK=$s; break; }
+  done
+  unset s
+fi
+export COLORTERM=${COLORTERM:-truecolor}
+# Optional Claude Code version pin for leads only (global settings untouched): LEAD_CLAUDE_VERSION in
+# ~/.config/monday/monster.env (from local.env). Empty (default) = no pin: leads run ~/.local/bin/claude
+# and it updates as usual. With a pin: no self-update inside a lead, and LEAD_CLAUDE, while that version
+# is still installed (the native installer keeps a few in ~/.local/share/claude/versions), is what
+# monday-leads starts (else ~/.local/bin/claude). Bump the pin after an update.
+pin=${LEAD_CLAUDE_VERSION:-$(sed -n 's/^LEAD_CLAUDE_VERSION=//p' "$HOME/.config/monday/monster.env" 2>/dev/null | tail -n 1)}
+pin=${pin//[^0-9A-Za-z._-]/}
+if [ -n "$pin" ]; then
+  export DISABLE_AUTOUPDATER=1
+  LEAD_CLAUDE=$HOME/.local/share/claude/versions/$pin
+  [ -x "$LEAD_CLAUDE" ] || unset LEAD_CLAUDE
+fi
+unset pin

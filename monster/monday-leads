@@ -1,0 +1,866 @@
+#!/usr/bin/env python3
+"""monday-leads: Claude Code project leads, one window each in tmux session `leads` of `tmux -L monster`
+(window name = lead name; CCGram binds one Telegram topic per window of that one session).
+Monday carries transport, power, wake and tmux only. In an agent-kit project (DIR/$LEADS_KIT_DIR, default .agentkit) the kit's
+files are the truth: master-writer (session id, SendMessage name), handoff-pending (HANDOFF_PATH COMMIT),
+limit-stop (RESETS_AT ORG HANDOFF), workers/, autopilot/, scripts/working_mode.py. Nothing is copied here;
+the only kit file this script changes is limit-stop, deleted when `up` continues it (as the kit's own
+watchdog would).
+
+  list                         name state mode(kit|manual|autopilot) running(yes|no|dead) last-state age
+  status --json                per lead: {schema:1, project, lead:{name, claude_name, session_id, alive, state, since,
+                               context_tokens}, mode, owner, handoff, limit, workers, autopilot_report}
+  add NAME DIR [SESSION_ID]    register a lead (DIR: the main checkout; path or folder in MONSTER_DEV)
+  rm NAME                      forget a lead (its window is left alone)
+  set NAME key=value...        keys: dir session_id handoff claude_name order(int) master_writer(true|false)
+                               worktree (run dir; relative: inside DIR) mode(manual|autopilot, non-kit only)
+                               state(active|parked)
+  up [NAME]                    start active leads whose claude is not running, in `order`, each waiting for
+                               its prompt; reports parked ones; refuses two leads in one checkout and a lead
+                               whose limit-stop has not reset yet
+  unpark NAME|all              make parked leads active and start them
+  mode NAME away|present       kit: type KIT_CMD:mode autopilot|present into the lead
+  stopall                      emergency brake: Escape to every lead, kit mode -> present; kills nothing
+  check NAME                   git state of the lead dir and worktree: uncommitted, merge/rebase, stale locks
+  park NAME|all [HANDOFF] [--force]
+      kit: types KIT_CMD:handoff (update handoff-pending, release the master writer, stop), waits up to
+           20 min until handoff-pending is newer than the request and the master writer is released, runs
+           `check`, then ends claude. Anything missing: claude keeps running, nothing is parked.
+           --force: ends claude now, no hand-off, no check.
+      other: needs HANDOFF (or the registered one) written in the last 2 h and a clean `check` (or --force).
+      The window stays as a dead pane (CCGram deletes a closed window's topic).
+  power-check                  exit 1 when something blocks power off/reboot/sleep ("BLOCKS:" lines): a claude
+                               session or background worker working or waiting on permission/question
+                               (`claude agents --json --all`, lead status files), a live worker pid, a
+                               KIT_DIR/*.lock held by a live pid, or `claude agents` failing (fails closed).
+                               Idle sessions: "idle, will be resumable".
+  ccgram status|restart        the CCGram user unit (ccgram.service): restart it, then print its state and
+                               `ccgram status` against the lead server; exit 1 when the unit is not active
+  viewers                      one line per tmux client of a view-* or leads session: SESSION ACTIVITY CREATED
+                               TERMNAME IP (activity: epoch of its last key; IP: SSH_CONNECTION of the mosh-server
+                               or sshd above the client, "-" when local or unknown)
+  events [OFFSET]              events.jsonl after byte OFFSET, then "OFFSET <n>". When the reader is caught up
+                               (OFFSET == size) and the file is over 5 MB, it is renamed to events.jsonl.1 and
+                               "OFFSET 0" is returned: a single reader never misses an event.
+
+Start policy, kit: handoff-pending names this lead's hand-off (the one it wrote at park, or a file in its
+run dir) -> fresh claude with the model and effort of the hand-off's first line, told to read it; else
+--resume the session id (master-writer when it names this lead, else the newest `claude agents --all` row
+with this claude_name, else the registry). Non-kit: no session_id, parked >= 24 h or the handoff is newer
+than the session transcript -> fresh; else resume. Claude runs as `-n claude_name` (default: the lead
+name), the name other leads address with SendMessage. Usage limits: no limit_watchdog; Monday reads
+`limit` in status and runs `up NAME` after RESETS_AT; that start deletes limit-stop as the watchdog would.
+Env (also read from ~/.config/monday/monster.env): MONSTER_DEV (projects root, default ~/projects),
+LEADS_KIT_DIR (default .agentkit), LEADS_KIT_CMD (default /agentkit), LEADS_CMD (claude binary, tests use a fake), LEADS_SOCKET (default monster), LEADS_ENV (default
+~/.config/monday/lead-env), LEADS_VERIFY_S (8), LEADS_PROMPT_S (60), LEADS_PARK_WAIT_S (1200).
+"""
+import fcntl, glob, json, os, re, subprocess, sys, time
+
+HOME = os.path.expanduser("~")
+
+
+def _site_env(path):
+    """KEY=VALUE lines of ~/.config/monday/monster.env (personal values, written by install-user.sh);
+    the process environment wins, so tests and one-off calls can override them."""
+    try:
+        for line in open(path):
+            k, sep, v = line.strip().partition("=")
+            if sep and re.fullmatch(r"[A-Z_][A-Z0-9_]*", k):
+                os.environ.setdefault(k, v.strip().strip('"').strip("'"))
+    except OSError:
+        pass
+
+
+_site_env(os.path.join(HOME, ".config/monday/monster.env"))
+REG = os.path.join(HOME, ".config/monday/leads.json")
+STATE = os.path.join(HOME, ".local/state/monday")
+EVENTS = os.path.join(STATE, "events.jsonl")
+CONF = os.path.join(HOME, ".config/monday/lead-tmux.conf")
+DEV = os.environ.get("MONSTER_DEV", os.path.join(HOME, "projects"))
+# the agent kit: its per-project state folder and its slash-command namespace
+KIT_DIR = os.environ.get("LEADS_KIT_DIR", ".agentkit")
+KIT_CMD = os.environ.get("LEADS_KIT_CMD", "/agentkit")
+SOCK = os.environ.get("LEADS_SOCKET", "monster")
+ENVF = os.environ.get("LEADS_ENV") or os.path.join(HOME, ".config/monday/lead-env")
+VERIFY_S = float(os.environ.get("LEADS_VERIFY_S", "8"))
+PROMPT_S = float(os.environ.get("LEADS_PROMPT_S", "60"))
+PARK_WAIT_S = float(os.environ.get("LEADS_PARK_WAIT_S", "1200"))
+SESS = "leads"
+EVENTS_MAX = 5 << 20
+_c = os.path.join(HOME, ".local/bin/claude")
+CMD = os.environ.get("LEADS_CMD") or (_c if os.path.exists(_c) else "claude")
+KEYS = {"dir", "session_id", "mode", "state", "handoff", "claude_name", "order", "master_writer", "worktree"}
+# lead-env may pin a claude binary (LEAD_CLAUDE); argv0 stays "claude" for tmux, the hook and CCGram
+LAUNCH = '[ -r "$0" ] && . "$0"; [ -x "${LEAD_CLAUDE:-}" ] && exec -a claude "$LEAD_CLAUDE" "${@:2}"; exec "$@"'
+
+
+def die(msg, code=2):
+    print(msg, file=sys.stderr)
+    sys.exit(code)
+
+
+def name_ok(n):
+    if not re.fullmatch(r"[A-Za-z0-9_-]{1,32}", n):
+        die(f"bad lead name: {n}")
+    return n
+
+
+def lock(path=REG):
+    """Exclusive flock shared with the notify hook; released when the returned file is closed."""
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    f = open(path + ".lock", "a")
+    fcntl.flock(f, fcntl.LOCK_EX)
+    return f
+
+
+def load():
+    try:
+        with open(REG) as f:
+            return json.load(f)
+    except FileNotFoundError:
+        return {}
+
+
+def save(reg):
+    os.makedirs(os.path.dirname(REG), exist_ok=True)
+    tmp = f"{REG}.{os.getpid()}.tmp"
+    with open(tmp, "w") as f:
+        json.dump(reg, f, indent=2, sort_keys=True)
+        f.write("\n")
+    os.replace(tmp, REG)  # atomic: the hook may read or rewrite it at the same time
+
+
+def update(n, **kv):
+    """Change one lead's registry entry under the lock (re-read: others may have written meanwhile)."""
+    with lock():
+        reg = load()
+        reg[n].update(kv, updated=int(time.time()))
+        save(reg)
+    return reg
+
+
+def get(reg, n):
+    if name_ok(n) not in reg:
+        die(f"no such lead: {n}")
+    return reg[n]
+
+
+def readf(path):
+    try:
+        with open(path, encoding="utf-8", errors="replace") as f:
+            return f.read()
+    except OSError:
+        return ""
+
+
+def tmux(*a, inp=None):
+    return subprocess.run(["tmux", "-L", SOCK, "-f", CONF, *a], capture_output=True, text=True, input=inp)
+
+
+def win(n):
+    return f"={SESS}:={n}"
+
+
+def panes():
+    """{window name: (dead, pane pid, current command)} for the windows of session `leads`."""
+    r = tmux("list-panes", "-s", "-t", f"={SESS}", "-F", "#{window_name}\t#{pane_dead}\t#{pane_pid}\t#{pane_current_command}")
+    out = {}
+    for line in r.stdout.splitlines() if r.returncode == 0 else []:
+        w, dead, pid, cur = line.split("\t")
+        out.setdefault(w, (dead == "1", int(pid or 0), cur))
+    return out
+
+
+def alive(pid):
+    try:
+        os.kill(int(pid), 0)
+        return int(pid) > 0
+    except (OSError, ValueError, TypeError):
+        return False
+
+
+def runs_claude(p):
+    return bool(p) and not p[0] and p[2] == "claude" and alive(p[1])
+
+
+def paste(n, text):
+    """Type TEXT into the lead as a bracketed paste, then Enter (as monster-ctl send does)."""
+    b = f"monday-leads-{os.getpid()}"
+    tmux("load-buffer", "-b", b, "-", inp=text)
+    tmux("paste-buffer", "-p", "-d", "-b", b, "-t", win(n))
+    time.sleep(0.3)
+    tmux("send-keys", "-t", win(n), "Enter")
+
+
+def cname(n, l):
+    return l.get("claude_name") or n
+
+
+def run_dir(l):
+    return l.get("worktree") or l["dir"]
+
+
+def kit(l):
+    """The project's kit store (main checkout's KIT_DIR), or None for a project without an agent kit."""
+    k = os.path.join(l["dir"], KIT_DIR)
+    return k if os.path.isdir(k) else None
+
+
+def master_writer(k):
+    """(session id, SendMessage name) from KIT_DIR/master-writer; ('', '') when released."""
+    lines = [s.strip() for s in readf(os.path.join(k, "master-writer")).splitlines()] + ["", ""]
+    return lines[0], lines[1]
+
+
+def pending(l):
+    """The hand-off path KIT_DIR/handoff-pending names (HANDOFF_PATH COMMIT), or None."""
+    w = readf(os.path.join(kit(l), "handoff-pending")).split()
+    return os.path.join(l["dir"], w[0]) if w else None
+
+
+def limit_stop(l):
+    """{resets_at, org, handoff} from KIT_DIR/limit-stop (RESETS_AT ORG HANDOFF), or None."""
+    w = readf(os.path.join(kit(l), "limit-stop")).split() if kit(l) else []
+    if len(w) < 3 or not w[0].isdigit():
+        return None
+    return {"resets_at": int(w[0]), "org": w[1], "handoff": os.path.join(l["dir"], w[2])}
+
+
+def same(a, b):
+    return bool(a and b) and os.path.realpath(a) == os.path.realpath(b)
+
+
+def owner_of(reg, path):
+    """The lead whose run dir holds PATH (the deepest one: worktrees sit inside the main checkout)."""
+    best, rp = None, os.path.realpath(path)
+    for n, l in reg.items():
+        d = os.path.realpath(run_dir(l)) + os.sep
+        if rp.startswith(d) and (best is None or len(d) > best[1]):
+            best = (n, len(d))
+    return best and best[0]
+
+
+def mine(reg, n, path):
+    return bool(path) and (same(path, reg[n].get("handoff")) or owner_of(reg, path) == n)
+
+
+def my_limit(reg, n):
+    lim = limit_stop(reg[n])
+    return lim if lim and mine(reg, n, lim["handoff"]) else None
+
+
+def validate(k, v):
+    if k not in KEYS:
+        die(f"unknown key: {k}")
+    if k == "mode" and v not in ("manual", "autopilot"):
+        die("mode: manual|autopilot")
+    if k == "state" and v not in ("active", "parked"):
+        die("state: active|parked")
+    if k == "session_id" and v and not re.fullmatch(r"[0-9a-f-]{36}", v):
+        die(f"bad session id: {v}")
+    if k in ("dir", "worktree"):
+        if k == "worktree" and v in ("", "null"):
+            return None
+        v = v if v.startswith("/") else os.path.join(DEV, v)
+        if not os.path.isdir(v):
+            die(f"no such folder: {v}")
+    if k == "handoff" and v in ("", "null"):
+        v = None
+    if k == "claude_name" and not re.fullmatch(r"[A-Za-z0-9_][A-Za-z0-9_ .-]{0,63}", v):
+        die(f"bad claude_name: {v}")
+    if k == "order":
+        if not re.fullmatch(r"-?\d{1,6}", v):
+            die("order: integer")
+        v = int(v)
+    if k == "master_writer":
+        if v not in ("true", "false"):
+            die("master_writer: true|false")
+        v = v == "true"
+    return v
+
+
+def outside_claude(sid):
+    """pid of a claude process outside this tmux socket that has session `sid` open, else None."""
+    sdir = os.path.join(HOME, ".claude/sessions")
+    pids = set()
+    for f in os.listdir(sdir) if os.path.isdir(sdir) else []:
+        try:
+            with open(os.path.join(sdir, f)) as fh:
+                if f.endswith(".json") and json.load(fh).get("sessionId") == sid:
+                    pids.add(f[:-5])
+        except (OSError, ValueError):
+            pass
+    for p in os.listdir("/proc"):
+        if not p.isdigit():
+            continue
+        try:
+            with open(f"/proc/{p}/cmdline", "rb") as fh:
+                cmd = fh.read().split(b"\0")
+            if not any(os.path.basename(c) == b"claude" for c in cmd[:2]):
+                continue
+            if p not in pids and sid.encode() not in cmd:
+                continue
+            with open(f"/proc/{p}/environ", "rb") as fh:
+                env = fh.read()
+        except OSError:
+            continue
+        if f"/{SOCK},".encode() not in env:  # TMUX=/tmp/tmux-UID/<socket>,pid,idx
+            return p
+    return None
+
+
+def transcript(sid):
+    return max(glob.glob(os.path.join(HOME, ".claude/projects/*", f"{sid}.jsonl")), key=os.path.getmtime, default=None)
+
+
+def context_tokens(sid):
+    """Prompt size of the session's last API call (input + cache), from the transcript's tail."""
+    t = sid and transcript(sid)
+    if not t:
+        return None
+    with open(t, "rb") as f:
+        f.seek(max(0, os.path.getsize(t) - (256 << 10)))
+        lines = f.read().decode("utf-8", "replace").splitlines()
+    for line in reversed(lines):
+        try:
+            u = json.loads(line)["message"]["usage"]
+            return u.get("input_tokens", 0) + u.get("cache_creation_input_tokens", 0) + u.get("cache_read_input_tokens", 0)
+        except (ValueError, KeyError, TypeError):
+            continue
+    return None
+
+
+def agents(all_=False, strict=False):
+    """`claude agents --json [--all]`: sessions (ours in tmux too) with pid, sessionId, name, status/state.
+    On any error: [] (lists, status), or None when strict (the power guard must not read that as idle)."""
+    try:
+        r = subprocess.run([CMD, "agents", "--json", *(["--all"] if all_ else [])], capture_output=True, text=True, timeout=30)
+        data = json.loads(r.stdout)
+        if r.returncode != 0 or not isinstance(data, list):
+            raise ValueError(f"exit {r.returncode}")
+        return [a for a in data if isinstance(a, dict)]
+    except (OSError, ValueError, subprocess.TimeoutExpired):
+        return None if strict else []
+
+
+def session_of(n, l, ags=None):
+    """Session id to resume: kit master-writer when it names this lead, else the newest agents row
+    with this claude_name in the lead's run dir, else the registry (non-kit projects)."""
+    if kit(l):
+        sid, nm = master_writer(kit(l))
+        if sid and nm == cname(n, l):
+            return sid
+        rows = [a for a in (agents(True) if ags is None else ags)
+                if a.get("name") == cname(n, l) and a.get("sessionId") and same(a.get("cwd"), run_dir(l))]
+        if rows:
+            return max(rows, key=lambda a: a.get("startedAt") or 0)["sessionId"]
+    return l.get("session_id") or ""
+
+
+def model_effort(path):
+    """Model and effort named by the hand-off's first line (the kit's form, as limit_watchdog parses it)."""
+    first = (readf(path).splitlines() or [""])[0]
+    m = re.search(r"(?:--model[ =]+|\bmodel:[ ]*)`?([A-Za-z][\w.\[\]-]{1,79})", first, re.I)
+    e = re.search(r"(?:--effort[ =]+|\beffort:[ ]*)`?(low|medium|high|xhigh|max)\b", first, re.I)
+    return (m[1] if m else None), (e[1].lower() if e else None)
+
+
+def plan(reg, n, parked_at=None):
+    """{'handoff': path} for a fresh start, {'sid': id} to resume, or None: nothing to start from."""
+    l = reg[n]
+    if kit(l):
+        ho = pending(l)
+        if ho and os.path.isfile(ho) and mine(reg, n, ho):
+            return {"handoff": ho}
+        sid, ho = session_of(n, l), l.get("handoff") if parked_at else None  # the one it wrote at park
+        t = sid and transcript(sid)
+        if ho and os.path.isfile(ho) and (not t or os.path.getmtime(ho) > os.path.getmtime(t)):
+            return {"handoff": ho}
+        return {"sid": sid} if sid else None
+    sid, ho = l.get("session_id"), l.get("handoff")
+    has_ho = bool(ho) and os.path.isfile(ho)
+    if has_ho and (not sid or (parked_at and time.time() - parked_at >= 86400)
+                   or os.path.getmtime(ho) > (os.path.getmtime(transcript(sid)) if transcript(sid) else 0)):
+        return {"handoff": ho}
+    return {"sid": sid} if sid else None
+
+
+def tail(n, lines=15):
+    out = tmux("capture-pane", "-p", "-J", "-t", win(n), "-S", f"-{lines}").stdout.rstrip()
+    return "\n".join("    " + s for s in out.splitlines()) or "    (no output)"
+
+
+def start(n, l, p):
+    """Start claude in the lead's window (same window when it exists: CCGram keeps the topic). Error text or None."""
+    if "handoff" in p:
+        model, effort = model_effort(p["handoff"])
+        args = [*(["--model", model] if model else []), *(["--effort", effort] if effort else []),
+                f"Read {p['handoff']} and continue; first report drift before editing."]
+    else:
+        pid = outside_claude(p["sid"])
+        if pid:
+            return f"REFUSED, session {p['sid']} is open in claude pid {pid} outside tmux -L {SOCK}; close it first"
+        args = ["--resume", p["sid"]]
+    argv = ["bash", "-c", LAUNCH, ENVF, CMD, "-n", cname(n, l), *args]
+    if n in panes():
+        r = tmux("respawn-pane", "-k", "-t", win(n), "-c", run_dir(l), *argv)
+    elif tmux("has-session", "-t", f"={SESS}").returncode == 0:
+        r = tmux("new-window", "-d", "-t", f"={SESS}:", "-n", n, "-c", run_dir(l), *argv,
+                 ";", "set-option", "-w", "-t", win(n), "remain-on-exit", "on")
+    else:
+        r = tmux("new-session", "-d", "-s", SESS, "-n", n, "-x", "220", "-y", "50", "-c", run_dir(l), *argv,
+                 ";", "set-option", "-w", "-t", win(n), "remain-on-exit", "on")
+    # the option chained in the same tmux command runs before a crashing claude can close the window
+    return f"tmux failed: {r.stderr.strip()}" if r.returncode else None
+
+
+def wait_ready(n):
+    """After VERIFY_S, the pane must still run claude; then wait for its input prompt. Error text or None."""
+    time.sleep(VERIFY_S)
+    deadline = time.time() + PROMPT_S
+    while True:
+        if not runs_claude(panes().get(n)):
+            return "FAILED, claude is not running; last output:\n" + tail(n)
+        if "❯" in tmux("capture-pane", "-p", "-t", win(n)).stdout:
+            return None
+        if time.time() > deadline:
+            return f"started, but no prompt after {VERIFY_S + PROMPT_S:.0f} s; last output:\n" + tail(n)
+        time.sleep(1)
+
+
+def end(names):
+    """End claude in each window, keep the window as a dead pane with a note; wait until they are dead."""
+    ps = panes()
+    for n in names:
+        if n in ps and not ps[n][0]:
+            tmux("respawn-pane", "-k", "-t", win(n), "printf", "%s\\n",
+                 f"lead {n} parked {time.strftime('%F %R')}; monday-leads unpark {n}")
+    for _ in range(50):  # claude saves its transcript on SIGHUP; report once the placeholder pane is dead
+        if all((panes().get(n) or (True,))[0] for n in names):
+            break
+        time.sleep(0.1)
+
+
+def by_order(reg, names):
+    return sorted(names, key=lambda n: (reg[n].get("order", 1000), n))
+
+
+def up(reg, names, plans=None):
+    """Start leads one by one in `order`, each waiting for its prompt. plans: {name: plan} from unpark."""
+    ps, ok = panes(), True
+    for n in by_order(reg, names):
+        l = reg[n]
+        if l["state"] != "active":
+            print(f"{n}: parked since {ago(l.get('parked_at') or l['updated'])} ago, not started (unpark {n})")
+            continue
+        if runs_claude(ps.get(n)):
+            print(f"{n}: already running")
+            continue
+        twin = [m for m, o in reg.items() if m != n and same(run_dir(o), run_dir(l))
+                and (o["state"] == "active" or runs_claude(ps.get(m)))]
+        if twin:
+            ok = False
+            print(f"{n}: REFUSED, same checkout {run_dir(l)} as {', '.join(twin)}; give one a worktree (set {n} worktree=...)")
+            continue
+        lim = my_limit(reg, n)
+        if lim and lim["resets_at"] > time.time():
+            print(f"{n}: limit stop until {time.strftime('%F %R', time.localtime(lim['resets_at']))}, not started")
+            continue
+        p = plans[n] if plans and n in plans else plan(reg, n)
+        if lim and os.path.isfile(lim["handoff"]):
+            p = {"handoff": lim["handoff"]}  # a limit stop continues from the hand-off it names
+        if p is None:
+            print(f"{n}: no session id and no hand-off, nothing to start from")
+            continue
+        err = start(n, l, p) or wait_ready(n)
+        if err:
+            ok = False
+            print(f"{n}: {err}")
+            continue
+        how = f"fresh from hand-off {p['handoff']}" if "handoff" in p else f"resumed {p['sid']}"
+        print(f"{n}: started in {run_dir(l)} as '{cname(n, l)}', {how}")
+        if lim and "handoff" in p and same(lim["handoff"], p["handoff"]):
+            os.unlink(os.path.join(kit(l), "limit-stop"))  # Monday continues limit stops (no limit_watchdog)
+            print(f"{n}: limit stop continued, limit-stop removed")
+        if "handoff" in p and l.get("master_writer"):
+            print(f"{n}: needs master_writer claim --force (owner approval); not claimed automatically")
+    return ok
+
+
+def git_check(l):
+    """Problems that make parking unsafe, in the lead dir and its worktree. Reports only, never fixes."""
+    probs = []
+    for d in dict.fromkeys(x for x in (l["dir"], l.get("worktree")) if x):
+        g = lambda *a: subprocess.run(["git", "-C", d, *a], capture_output=True, text=True)
+        gd = g("rev-parse", "--absolute-git-dir")
+        if gd.returncode:
+            continue  # not a git checkout
+        gd = gd.stdout.strip()
+        dirty = [s for s in g("status", "--porcelain").stdout.splitlines() if s]
+        if dirty:
+            probs.append(f"{d}: {len(dirty)} uncommitted change(s)")
+        for f, what in (("MERGE_HEAD", "merge"), ("rebase-merge", "rebase"), ("rebase-apply", "rebase/am"),
+                        ("CHERRY_PICK_HEAD", "cherry-pick"), ("REVERT_HEAD", "revert")):
+            if os.path.exists(os.path.join(gd, f)):
+                probs.append(f"{d}: {what} in progress")
+        il = os.path.join(gd, "index.lock")
+        if os.path.exists(il) and time.time() - os.path.getmtime(il) > 60:
+            probs.append(f"{d}: stale {il} (older than 60 s)")
+        common = os.path.realpath(os.path.join(d, g("rev-parse", "--git-common-dir").stdout.strip()))
+        for lk in glob.glob(os.path.join(common, "worktrees/*/locked")):
+            pids = [int(p) for p in re.findall(r"\b\d{2,7}\b", readf(lk))]
+            dead = [p for p in pids if not alive(p)]
+            if dead:
+                probs.append(f"{d}: worktree lock {lk} names dead pid {dead[0]}")
+    return list(dict.fromkeys(probs))
+
+
+def park_kit(reg, n, force):
+    """The kit's hand-off protocol, then end claude. Error text, or None when parked."""
+    l, k = reg[n], kit(reg[n])
+    if runs_claude(panes().get(n)) and not force:
+        sid, nm = master_writer(k)
+        held = bool(sid) and (nm == cname(n, l) or sid == session_of(n, l))
+        t0 = time.time()
+        paste(n, f"{KIT_CMD}:handoff then update {KIT_DIR}/handoff-pending"
+              + (", release the master writer (python3 scripts/master_writer.py release)" if held else "")
+              + " and stop: Monday parks this lead.")
+        hp = os.path.join(k, "handoff-pending")
+        while True:
+            fresh_ho = os.path.exists(hp) and os.path.getmtime(hp) > t0
+            released = not (held and master_writer(k)[0])
+            if fresh_ho and released:
+                break
+            if time.time() - t0 > PARK_WAIT_S or not runs_claude(panes().get(n)):
+                why = "claude ended" if not runs_claude(panes().get(n)) else f"no hand-off after {PARK_WAIT_S / 60:.0f} min"
+                return (f"NOT parked, {why}: handoff-pending {'updated' if fresh_ho else 'not updated'}, "
+                        f"master writer {'released' if released else 'still held'}; claude left as it is")
+            time.sleep(min(5, PARK_WAIT_S / 20))
+        probs = git_check(l)
+        if probs:
+            return "NOT parked, handed off but check failed (claude left running; park --force ends it):\n  " + "\n  ".join(probs)
+    ho = pending(l) if pending(l) and mine(reg, n, pending(l)) else l.get("handoff")
+    update(n, state="parked", parked_at=int(time.time()), handoff=ho)
+    end([n])
+    return None
+
+
+def park_plain(reg, names, path, force):
+    bad, now = [], time.time()
+    for n in names:
+        l = reg[n]
+        h = os.path.join(l["dir"], path) if path else l.get("handoff")  # relative: in the lead's folder
+        if not h or not os.path.isfile(h):
+            bad.append(f"{n}: handoff not written: {h}")
+        elif now - os.path.getmtime(h) > 7200:
+            bad.append(f"{n}: handoff {h} was not written in the last 2 h")
+        else:
+            l["handoff"] = h
+        if not force:
+            bad += [f"{n}: {p}" for p in git_check(l)]
+    if bad:
+        return "not parked (fix, or --force for the git checks):\n" + "\n".join(bad)
+    with lock():
+        cur = load()
+        for n in names:
+            cur[n].update(state="parked", parked_at=int(now), updated=int(now), handoff=reg[n]["handoff"])
+        save(cur)
+    end(names)
+    return None
+
+
+def lead_states():
+    """{lead: {state, ts, session_id}} from the status files the notify hook writes."""
+    out = {}
+    for f in glob.glob(os.path.join(STATE, "leads/*.json")):
+        try:
+            with open(f) as fh:
+                out[os.path.basename(f)[:-5]] = json.load(fh)
+        except (OSError, ValueError):
+            pass
+    return out
+
+
+def working_mode(l, cache={}):
+    """(first line, owner) of the project's `python3 scripts/working_mode.py`, once per project."""
+    if l["dir"] not in cache:
+        try:
+            out = subprocess.run(["python3", "scripts/working_mode.py"], cwd=l["dir"], capture_output=True,
+                                 text=True, timeout=20).stdout.splitlines()
+        except (OSError, subprocess.TimeoutExpired):
+            out = []
+        owner = next((s.split(":", 1)[1].strip() for s in out if s.startswith("Owner:")), None)
+        cache[l["dir"]] = (out[0] if out else None, owner)
+    return cache[l["dir"]]
+
+
+def workers(k):
+    """Workers of the project: KIT_DIR/workers/NAME.state (first word) and NAME.result.md's Kind."""
+    out = []
+    for f in sorted(glob.glob(os.path.join(k, "workers/*.state"))):
+        w = f[:-6]
+        st = (readf(f).split() or [None])[0]
+        live = readf(w + ".live").strip()
+        # shortcut: hides idle workers untouched for a day (old ones pile up by the hundred); show all if asked
+        if st == "idle" and not alive(live or 0) and time.time() - os.path.getmtime(f) > 86400:
+            continue
+        kind = re.match(r"Kind:\s*(\S+)", readf(w + ".result.md"))
+        out.append({"name": os.path.basename(w), "state": st, "result_kind": kind[1] if kind else None})
+    return out
+
+
+def status(reg):
+    ps, st, ags = panes(), lead_states(), agents(True)
+    out = []
+    for n in by_order(reg, reg):
+        l, p, s = reg[n], ps.get(n), st.get(n) or {}
+        k, live = kit(l), runs_claude(p)
+        sid = session_of(n, l, ags)
+        ag = next((a for a in ags if (live and a.get("pid") == p[1]) or (sid and a.get("sessionId") == sid and a.get("pid"))), {})
+        lim = my_limit(reg, n) if k else None
+        state, since = {"failed": "idle", "ended": "dead"}.get(s.get("state"), s.get("state") or "idle"), s.get("ts")
+        if state == "working" and ag.get("status") == "idle":  # Stop hook missed (e.g. killed mid-turn)
+            state = "idle"
+        if l["state"] == "parked":
+            state, since = "parked", l.get("parked_at")
+        elif lim:
+            state, since = "limit", int(os.path.getmtime(os.path.join(k, "limit-stop")))
+        elif not live:
+            state = "dead"
+        mode, owner = working_mode(l) if k else (l.get("mode"), None)
+        reports = sorted(glob.glob(os.path.join(k, "autopilot/[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9].md"))) if k else []
+        out.append({"schema": 1, "project": l["dir"],
+                    "lead": {"name": n, "claude_name": cname(n, l), "session_id": sid or None, "alive": live,
+                             "state": state, "since": since, "context_tokens": context_tokens(sid),
+                             "window": "none" if not p else "dead" if p[0] else "live"},
+                    "mode": mode, "owner": owner,
+                    "handoff": (pending(l) if pending(l) and mine(reg, n, pending(l)) else None) if k else l.get("handoff"),
+                    "limit": lim, "workers": workers(k) if k else [],
+                    "autopilot_report": reports[-1] if reports else None})
+    return out
+
+
+def held_locks():
+    """{(device 'MM:mm', inode): pid} of the locks in /proc/locks."""
+    out = {}
+    for line in readf("/proc/locks").splitlines():
+        f = line.split()
+        if len(f) > 5 and f[1] != "->":
+            dev = f[5].rsplit(":", 1)
+            out[(dev[0], dev[1])] = f[4]
+    return out
+
+
+def power_check(reg):
+    """(blockers, notes) for a power off, reboot or sleep. Blocks: a session or background worker that is
+    working or waiting on a permission/question, a live worker pid, a KIT_DIR/*.lock held by a live
+    pid. Idle sessions only become notes: they resume after a wake (sleep keeps them running anyway)."""
+    blocks, notes = [], []
+    waiting = {n for n, s in lead_states().items() if s.get("state") in ("waiting_permission", "waiting_question")}
+    ps = panes()
+    for n in waiting:
+        if n in reg and runs_claude(ps.get(n)):
+            blocks.append(f"lead {n} waits on a {lead_states()[n]['state'][8:]}")
+    ags = agents(True, strict=True)
+    if ags is None:  # fail closed: unknown is not idle
+        blocks.append(f"cannot list claude sessions (`{os.path.basename(CMD)} agents --json --all` failed): state unknown")
+    for a in ags or []:
+        what = f"claude {a.get('kind', '?')} session {a.get('name') or a.get('id') or a.get('sessionId')} in {a.get('cwd')}"
+        st, live = a.get("status") or a.get("state"), alive(a.get("pid"))
+        if st in ("busy", "working") or (live and st in ("blocked", "waiting", "needs_input")):
+            blocks.append(f"{what} ({st}, pid {a.get('pid', '-')})")
+        elif live and st == "idle":
+            notes.append(f"{what}: idle, will be resumable")
+    locks = held_locks()
+    for k in dict.fromkeys(filter(None, (kit(l) for l in reg.values()))):
+        for f in glob.glob(os.path.join(k, "*.lock")):
+            s = os.stat(f)
+            pid = locks.get((f"{os.major(s.st_dev):02x}:{os.minor(s.st_dev):02x}", str(s.st_ino)))
+            if alive(pid):
+                blocks.append(f"{f} held by live pid {pid}")
+        for f in glob.glob(os.path.join(k, "workers/*.live")):
+            pid = readf(f).strip()
+            if alive(pid or 0):
+                blocks.append(f"worker {os.path.basename(f)[:-5]} of {os.path.dirname(k)} runs (pid {pid})")
+    return blocks, notes
+
+
+def remote_ip(pid):
+    """Client IP of the mosh-server/sshd the tmux client runs under (sshd itself is root: its child's env)."""
+    below = None
+    while pid > 1:
+        try:
+            comm = readf(f"/proc/{pid}/comm").strip()
+            ppid = int(readf(f"/proc/{pid}/stat").rsplit(")", 1)[1].split()[1])
+        except (IndexError, ValueError):
+            return "-"
+        try:
+            with open(f"/proc/{pid}/environ", "rb") as f:
+                env = dict(kv.split(b"=", 1) for kv in f.read().split(b"\0") if b"=" in kv)
+            conn = env.get(b"SSH_CONNECTION")
+        except OSError:
+            conn = None
+        if comm == "mosh-server" or comm.startswith("sshd"):
+            conn = conn or below
+            return conn.split()[0].decode() if conn else "-"
+        below, pid = conn, ppid
+    return "-"
+
+
+def ago(ts):
+    s = int(time.time() - ts)
+    return f"{s}s" if s < 120 else f"{s // 60}m" if s < 7200 else f"{s // 3600}h" if s < 172800 else f"{s // 86400}d"
+
+
+def main(a):
+    cmd = a.pop(0) if a else "list"
+    reg = load()
+    if cmd == "list" and not a:
+        ps, st = panes(), lead_states()
+        for n in by_order(reg, reg):
+            l, p, s = reg[n], ps.get(n), st.get(n)
+            run = "no" if not p else "dead" if p[0] else "yes"
+            print(n, l["state"], "kit" if kit(l) else l.get("mode", "manual"), run, f"{s['state']} {ago(s['ts'])}" if s else "- -")
+    elif cmd == "status" and a == ["--json"]:
+        print(json.dumps(status(reg), indent=1))
+    elif cmd in ("add", "rm", "set"):
+        with lock():
+            reg = load()
+            if cmd == "add" and len(a) in (2, 3):
+                n = name_ok(a[0])
+                if n in reg:
+                    die(f"lead exists: {n}")
+                reg[n] = {"dir": validate("dir", a[1]), "session_id": validate("session_id", a[2] if len(a) > 2 else ""),
+                          "state": "active", "handoff": None, "updated": int(time.time())}
+                if not kit(reg[n]):
+                    reg[n]["mode"] = "manual"
+            elif cmd == "rm" and len(a) == 1:
+                get(reg, a[0])
+                del reg[a[0]]
+            elif cmd == "set" and len(a) >= 2:
+                l = get(reg, a[0])
+                for kv in a[1:]:
+                    k, sep, v = kv.partition("=")
+                    if not sep:
+                        die(f"not key=value: {kv}")
+                    if k == "mode" and kit(l):
+                        die(f"{a[0]} is a agent-kit project: the kit keeps the mode; use `mode {a[0]} away|present`")
+                    if k == "worktree" and v and not v.startswith("/"):
+                        v = os.path.join(l["dir"], v)  # relative: inside the lead's main checkout
+                    l[k] = validate(k, v)
+                l["updated"] = int(time.time())
+            else:
+                die(__doc__)
+            save(reg)
+        print({"add": "added", "rm": "removed", "set": "set"}[cmd], a[0])
+    elif cmd == "up" and len(a) <= 1:
+        if a:
+            get(reg, a[0])
+        sys.exit(0 if up(reg, a or list(reg)) else 1)
+    elif cmd == "unpark" and len(a) == 1:
+        with lock():
+            reg = load()
+            names = [n for n in reg if reg[n]["state"] == "parked"] if a[0] == "all" else [a[0]]
+            plans = {}
+            for n in names:
+                l = get(reg, n)
+                if l["state"] != "parked":
+                    die(f"{n} is not parked")
+                plans[n] = plan(reg, n, l.get("parked_at") or l["updated"])
+                l["state"], l["updated"] = "active", int(time.time())
+                l.pop("parked_at", None)
+            save(reg)
+        if not names:
+            print("nothing parked")
+        sys.exit(0 if up(reg, names, plans) else 1)
+    elif cmd == "mode" and len(a) == 2 and a[1] in ("away", "present"):
+        l = get(reg, a[0])
+        if not kit(l):
+            die(f"{a[0]} has no agent kit; use set {a[0]} mode=manual|autopilot")
+        if not runs_claude(panes().get(a[0])):
+            die(f"{a[0]}: claude is not running", 1)
+        paste(a[0], f"{KIT_CMD}:mode " + ("autopilot" if a[1] == "away" else "present"))
+        print(f"{a[0]}: sent {KIT_CMD}:mode {'autopilot' if a[1] == 'away' else 'present'}")
+    elif cmd == "stopall" and not a:
+        ps, told = panes(), set()
+        for n in by_order(reg, reg):
+            if not runs_claude(ps.get(n)):
+                continue
+            tmux("send-keys", "-t", win(n), "Escape")
+            msg = f"{n}: Escape"
+            if kit(reg[n]) and reg[n]["dir"] not in told:  # the kit mode is per project: tell its first live lead
+                time.sleep(0.5)
+                paste(n, f"{KIT_CMD}:mode present")
+                told.add(reg[n]["dir"])
+                msg += f", {KIT_CMD}:mode present"
+            print(msg)
+        print("stopall: nothing killed; leads are idle at their prompt")
+    elif cmd == "check" and len(a) == 1:
+        probs = git_check(get(reg, a[0]))
+        print("\n".join(probs) if probs else f"{a[0]}: clean")
+        sys.exit(1 if probs else 0)
+    elif cmd == "park" and 1 <= len(a) <= 3:
+        force = "--force" in a
+        a = [x for x in a if x != "--force"]
+        if not 1 <= len(a) <= 2 or (a[0] == "all" and len(a) == 2):
+            die("usage: park NAME|all [HANDOFF] [--force] (park all uses each lead's registered handoff)")
+        names = by_order(reg, [n for n in reg if reg[n]["state"] == "active"]) if a[0] == "all" else [a[0]]
+        for n in names:
+            get(reg, n)
+        kits = [n for n in names if kit(reg[n])]
+        if kits and len(a) == 2:
+            die(f"{', '.join(kits)}: agent-kit project, the lead writes its own hand-off; park takes no HANDOFF")
+        errs = []
+        for n in kits:  # one at a time: the kit has one handoff-pending per project
+            e = park_kit(reg, n, force)
+            print(f"{n}: {e}" if e else f"parked {n}")
+            errs += [e] if e else []
+        plain = [n for n in names if n not in kits]
+        if plain:
+            e = park_plain(reg, plain, a[1] if len(a) == 2 else None, force)
+            print(e if e else "parked " + " ".join(plain), file=sys.stderr if e else sys.stdout)
+            errs += [e] if e else []
+        sys.exit(1 if errs else 0)
+    elif cmd == "power-check" and not a:
+        blocks, notes = power_check(reg)
+        print("\n".join([f"BLOCKS: {b}" for b in blocks] + notes) if blocks or notes else "nothing running")
+        sys.exit(1 if blocks else 0)
+    elif cmd == "ccgram" and a in (["status"], ["restart"]):
+        sd = ["systemctl", "--user"]
+        if a[0] == "restart":
+            subprocess.run([*sd, "restart", "ccgram.service"])
+        r = subprocess.run([*sd, "is-active", "ccgram.service"], capture_output=True, text=True)
+        print("ccgram.service:", r.stdout.strip() or r.stderr.strip(), flush=True)
+        # ccgram calls tmux without -L: point $TMUX at the lead server, as the unit does
+        sock = os.path.join(os.environ.get("TMUX_TMPDIR", "/tmp"), f"tmux-{os.getuid()}", SOCK)
+        subprocess.run([os.path.join(HOME, ".local/bin/ccgram"), "status"], env=dict(os.environ, TMUX=f"{sock},0,0"),
+                       stderr=subprocess.DEVNULL)
+        sys.exit(0 if r.stdout.strip() == "active" else 1)
+    elif cmd == "viewers" and not a:
+        out = tmux("list-clients", "-F", "#{client_pid}\t#{client_session}\t#{client_activity}\t#{client_created}\t#{client_termname}")
+        for line in out.stdout.splitlines():
+            pid, sess, act, created, term = line.split("\t")
+            if sess == SESS or sess.startswith("view-"):
+                print(sess, act, created, term or "-", remote_ip(int(pid)))
+    elif cmd == "events" and len(a) <= 1:
+        off = int(a[0]) if a and a[0].isdigit() else 0
+        with lock(EVENTS):  # the hook appends under the same lock
+            try:
+                size = os.path.getsize(EVENTS)
+                if off == size and size > EVENTS_MAX:
+                    os.replace(EVENTS, EVENTS + ".1")
+                    off = 0
+                else:
+                    with open(EVENTS, "rb") as f:
+                        f.seek(off if off <= size else 0)  # file was reset: start over
+                        sys.stdout.buffer.write(f.read())
+                        off = f.tell()
+            except FileNotFoundError:
+                off = 0
+        sys.stdout.buffer.write(f"OFFSET {off}\n".encode())
+    else:
+        die(__doc__)
+
+
+if __name__ == "__main__":
+    main(sys.argv[1:])

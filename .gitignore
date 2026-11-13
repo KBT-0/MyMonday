@@ -1,2 +1,6 @@
 local.env
 *.pub
+__pycache__/
+# the owner's private skill rules (installed next to the skill, never committed)
+**/references/local.md
+.private-strings

@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Set up Monster (CachyOS workstation, home city) so Monday can drive it over Tailscale.
+# Set up Monster (Arch-based workstation, here CachyOS + Hyprland) so Monday can drive it over Tailscale.
 # Idempotent. Run as root on Monster, from this folder:  bash setup.sh <owner-user> <monday-ssh-pubkey-file>
 #
 # Monday's key logs in as the owner, but only from the monday server's Tailscale IP and
@@ -8,10 +8,11 @@
 # Accepted risk: text Monday types into a session runs with the owner's rights. The owner's
 # sudo password stays the last lock; the owner is taken out of the docker group (= root).
 #
-# - monster-idle-off.timer: power off after 24 hours with no session, SSH or desktop login
+# - monster-idle-off.timer: power off after 24 awake hours with no running claude, interactive login or
+#   active desktop (see idle-off)
 # - sudo without password only for poweroff, reboot and suspend
 # - /usr/local/sbin/monday-grant <minutes>|off: the owner gives passwordless sudo for a
-#   limited time; typing the owner's sudo password is the approval
+#   limited time; typing the owner's sudo password is the approval; a reboot always ends it
 set -euo pipefail
 
 owner=${1:?owner user}; pub=${2:?monday ssh public key file}
@@ -24,6 +25,8 @@ here=$(dirname "$(readlink -f "$0")")
 
 install -m 755 "$here/monster-ctl" "$here/mon" /usr/local/bin/
 install -m 755 "$here/idle-off" /usr/local/sbin/monster-idle-off
+# monday-leads, notify hook, lead tmux config; XDG_RUNTIME_DIR: runuser does not set it (systemctl --user)
+runuser -u "$owner" -- env XDG_RUNTIME_DIR="/run/user/$(id -u "$owner")" bash "$here/install-user.sh"
 
 # Safety net: power off after 24 idle hours, even if Monday forgets to.
 cat > /etc/systemd/system/monster-idle-off.service <<EOF
@@ -59,9 +62,12 @@ printf '%s ALL=(root) NOPASSWD: /usr/bin/systemctl poweroff, /usr/bin/systemctl 
 chmod 440 /etc/sudoers.d/80-monster
 
 cat > /usr/local/sbin/monday-grant <<EOF
-#!/usr/bin/env bash
+#!/bin/bash
 # monday-grant <minutes>|off : passwordless sudo for $owner, removed again after <minutes>.
+# The expiry timer is transient (lost on reboot), so monday-grant-reset.service also removes the
+# grant at every boot: a reboot always ends it.
 set -euo pipefail
+PATH=/usr/sbin:/usr/bin:/sbin:/bin
 f=/etc/sudoers.d/90-monday-grant
 [ "\$(id -u)" = 0 ] || { echo "run with sudo"; exit 1; }
 systemctl stop monday-grant-expire.timer 2>/dev/null || true
@@ -74,17 +80,20 @@ logger -t monday-grant "passwordless sudo for $owner, \${m} min"
 echo "passwordless sudo for \$m min"
 EOF
 chmod 755 /usr/local/sbin/monday-grant
+cat > /etc/systemd/system/monday-grant-reset.service <<'EOF'
+[Unit]
+Description=Remove a passwordless sudo grant left from before the reboot (monday-grant)
+DefaultDependencies=no
+After=local-fs.target
+Before=sysinit.target
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/rm -f /etc/sudoers.d/90-monday-grant /etc/sudoers.d/90-monday-grant.tmp
+[Install]
+WantedBy=sysinit.target
+EOF
+systemctl daemon-reload
+systemctl enable monday-grant-reset.service
 visudo -c >/dev/null
-
-# Undo the first layout (separate monday user), if present.
-rm -f /etc/sudoers.d/80-monday /etc/tmpfiles.d/monster.conf; rm -rf /run/monster
-if id monday >/dev/null 2>&1; then
-  setfacl -x u:monday "$home_o" 2>/dev/null || true
-  setfacl -R -x u:monday,d:u:monday "$home_o/projects" 2>/dev/null || true
-  loginctl disable-linger monday 2>/dev/null || true
-  pkill -u monday 2>/dev/null || true; sleep 1
-  userdel -r monday 2>/dev/null || true
-fi
-getent group monster >/dev/null && groupdel monster
 
 echo "MONSTER-SETUP-OK"
