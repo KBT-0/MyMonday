@@ -150,7 +150,7 @@ class Main(unittest.TestCase):
         lw._peers = []
         lw._T0 = time.monotonic()
 
-    def run_main(self, events, lst, send=None, rc=0):
+    def run_main(self, events, lst, send=None, rc=0, viewers=""):
         calls = []
 
         def fake_ssh(*args, timeout=15):
@@ -163,6 +163,8 @@ class Main(unittest.TestCase):
                 return 0, lst
             if args[0] == "read":
                 return 0, "❯ "
+            if args[:2] == ("lead", "viewers"):
+                return 0, viewers
             return 1, ""
         sent = []
         with mock.patch.object(lw, "ssh", fake_ssh), \
@@ -220,6 +222,29 @@ class Main(unittest.TestCase):
         os.utime(lw.WORK_MODE_FILE, (now - 600, now - 600))  # mode 2 began 10 min ago
         self.run_main("OFFSET 0\n", "alpha active kit yes waiting_question 3h\n")
         self.assertEqual(rd(lw.WORK_MODE_FILE).strip(), "2")
+
+    def test_mode2_entry_when_typing_on_mac(self):
+        now = int(time.time())
+        wr(lw.WORK_MODE_FILE, "1\n")
+        v = f"view-1-1 {now - 30} {now - 900} xterm-256color 192.0.2.2\n"
+        calls, sent = self.run_main("OFFSET 0\n", "alpha active kit yes idle 1h\n", viewers=v)
+        self.assertEqual(rd(lw.WORK_MODE_FILE).strip(), "2")
+        self.assertTrue(any("mode 2" in s for s in sent))
+
+    def test_no_mode2_entry_for_phone_or_old_keys(self):
+        now = int(time.time())
+        wr(lw.WORK_MODE_FILE, "1\n")
+        v = (f"view-1-1 {now - 30} {now - 900} xterm-256color 192.0.2.9\n"     # phone
+             f"view-2-2 {now - 900} {now - 900} xterm-256color 192.0.2.2\n")   # Mac, idle 15 min
+        self.run_main("OFFSET 0\n", "alpha active kit yes idle 1h\n", viewers=v)
+        self.assertEqual(rd(lw.WORK_MODE_FILE).strip(), "1")
+
+    def test_no_mode2_entry_from_key_before_auto_exit(self):
+        now = int(time.time())
+        wr(lw.WORK_MODE_FILE, "1\n")
+        st = {"mode1_at": now - 10}
+        self.assertFalse(lw.mac_typing(st, now, [("192.0.2.2", now - 60)]))
+        self.assertTrue(lw.mac_typing(st, now, [("192.0.2.2", now - 5)]))
 
 
 if __name__ == "__main__":

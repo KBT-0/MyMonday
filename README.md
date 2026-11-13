@@ -32,8 +32,9 @@ It is mostly proven third-party tools, glued together by small scripts you can r
   continued after the reset; a crashed lead stays readable instead of vanishing.
 - **Two work modes with automatic switching.** Mode 1: the owner drives everything from Telegram and
   gets every question at once. Mode 2: the owner sits at the Mac, the leads open as iTerm2 windows in
-  their saved layout, and pings hold back; mode 2 ends by itself when the Mac goes offline or a lead
-  has waited on the owner for 30 minutes.
+  their saved layout, and pings hold back. Mode 2 starts by itself when the owner types in a lead window
+  on the Mac (tmux client activity, nothing runs on the Mac) and ends by itself when the Mac goes offline
+  or a lead has waited on the owner for 30 minutes.
 - **Memory you can audit.** Plain Markdown in git, every fact with `src:` and `by:` provenance,
   `## Current` / `## History`, tombstones instead of deletes, a nightly capture of the day's sessions
   through a secret scanner, encrypted off-site backups.

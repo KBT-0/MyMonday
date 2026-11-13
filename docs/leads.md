@@ -84,7 +84,10 @@ claude (lead window) ─hook→ events.jsonl ─ssh workstation lead events OFFS
   after 15 min without a new prompt, a question/permission through the reminder. Mode 2 ends by itself
   when the Mac drops off the tailnet (asked from the server: no polling of the Mac) or a lead has really
   waited on the owner 30+ min since mode 2 began: a question or permission prompt, or a finished turn
-  whose screen shows nothing running. The message names who is waiting.
+  whose screen shows nothing running. The message names who is waiting. Mode 2 also starts by itself:
+  in mode 1 `lead viewers` is read each minute, and a key typed within 3 min in a lead window whose
+  connection comes from the Mac's tailnet address (after the last switch to mode 1) switches to mode 2.
+  Viewers from other addresses (a phone) never do: on the phone the owner stays in mode 1.
 - **Reminders:** a lead waiting on a question or permission (its state in `lead list`) is reminded after
   15 min, then every 30 min.
 - **Silent failures covered:** a lead whose claude is gone without a session-end event (crash, kill) gets

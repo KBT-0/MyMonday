@@ -323,6 +323,45 @@ def workstation_online():
     return bool(WORKSTATION_IP) and any(WORKSTATION_IP in p.get("TailscaleIPs", []) and p.get("Online") for p in peers())
 
 
+TYPING_RECENT = 180  # s: a key typed this recently in a lead window on the Mac starts mode 2
+
+
+def parse_viewers(text):
+    """`lead viewers` lines: <session> <last key epoch> <created epoch> <term> [<ip>] -> [(ip, last_key)]."""
+    out = []
+    for line in text.splitlines():
+        f = line.split()
+        if len(f) >= 5 and f[1].isdigit():
+            out.append((f[4], int(f[1])))
+    return out
+
+
+def mac_typing(st, now, viewers):
+    """True when the owner typed in a lead window opened from the Mac within TYPING_RECENT, after the
+    last switch to mode 1 (so a key from before an automatic exit cannot bring mode 2 straight back)."""
+    if not MAC_IP:
+        return False
+    after = max(st.get("mode1_at", 0), now - TYPING_RECENT)
+    return any(ip == MAC_IP and key > after for ip, key in viewers)
+
+
+def check_mode2_entry(st, now):
+    """Mode 1: enter mode 2 by itself when the owner is typing in a lead window on the Mac
+    (tmux client activity from `lead viewers`; nothing runs on the Mac). Phone viewers never count."""
+    if readf(WORK_MODE_FILE, "1") == "2" or not MAC_IP or left() < 5:
+        return
+    try:
+        rc, out = ssh("lead", "viewers", timeout=min(10, left()))
+    except subprocess.TimeoutExpired:
+        return
+    if rc != 0 or not mac_typing(st, now, parse_viewers(out)):
+        return
+    with open(WORK_MODE_FILE, "w") as f:
+        f.write("2\n")
+    mode2_since(st)
+    queue(st, t("mode2_on"), now)
+
+
 def check_mode2_exit(st, now, up, busy):
     """Every 2 min in mode 2: leave it when the Mac is offline or (workstation up) a lead waits WAIT_EXIT+."""
     if readf(WORK_MODE_FILE, "1") != "2" or now - st.get("mac_check", 0) <= 120:
@@ -336,6 +375,7 @@ def check_mode2_exit(st, now, up, busy):
     with open(WORK_MODE_FILE, "w") as f:
         f.write("1\n")
     st.pop("mode2_since", None)
+    st["mode1_at"] = now
     # who is waiting right now: finished turns not reported yet are named here, then done with
     waiting = set(st["remind"])
     for lead, e in list(st["delayed"].items()):
@@ -395,6 +435,9 @@ def run():
         save(st); flush(st); return
     st["fails"] = 0
     states = parse_list(lst)
+    check_mode2_entry(st, now)
+    mode2 = readf(WORK_MODE_FILE, "1") == "2"
+    wanted = MODES["escalation"] if mode2 else wanted
     events, new_off = parse_events(out, st["offset"])
     mute = {l.strip() for l in readf(MUTE_FILE).splitlines() if l.strip()}
     pending = classify(events, set(states), mute, wanted, mode2, now, st["delayed"])
