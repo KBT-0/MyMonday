@@ -6,13 +6,14 @@
 # commit adds, commit messages, author/committer emails. Lines a commit removes do not count (removing
 # a value is the fix). Prints the KEY (or "private-strings line N") and where, never the value.
 # Skipped: values shorter than 4 characters, values equal to the local.env.example default or to a
-# built-in default path, generic settings (CHECK_PRIVATE_SKIP, default: language and on/off keys), and
+# built-in default path, generic settings (CHECK_PRIVATE_SKIP, default: language and on/off keys, and the
+# local names WORKSTATION_SSH_ALIAS / LEADS_SOCKET: an ssh alias and a tmux socket name, not addresses), and
 # the LICENSE file (the copyright holder is public by choice). No ENV_FILE (e.g. in CI): nothing to check.
 set -euo pipefail
 cd "$(git rev-parse --show-toplevel)"
 envf=${1:-local.env} range=${2:-HEAD}
-skip=" ${CHECK_PRIVATE_SKIP:-ASSISTANT_LANGUAGE OPS_LANG NOTIFY_LANG MONSTER_CCGRAM} "
-declare -A def=([BRAIN_DIR]=/srv/projects/brain [OPS_DIR]=/srv/projects/monday-ops [MONSTER_PROJECTS]=projects)
+skip=" ${CHECK_PRIVATE_SKIP:-ASSISTANT_LANGUAGE OPS_LANG NOTIFY_LANG WORKSTATION_CCGRAM WORKSTATION_SSH_ALIAS LEADS_SOCKET} "
+declare -A def=([BRAIN_DIR]=/srv/projects/brain [OPS_DIR]=/srv/projects/monday-ops [WORKSTATION_PROJECTS]=projects)
 list=()   # "label<TAB>value"
 if [ -f "$envf" ]; then
   while IFS='=' read -r k v; do [ -n "$v" ] && def[$k]=$v; done < <(grep -E '^[A-Z_][A-Z0-9_]*=' local.env.example || true)

@@ -124,8 +124,8 @@ packages; for root work it gives the operator the command.
    Workstation and ops (optional, see [docs/remote-workstation.md](../docs/remote-workstation.md)):
 
    ```sh
-   ssh admin@monday 'sudo bash /root/MyMonday/server/bootstrap.sh admin monster'   # prints the public key(s)
-   # on the workstation: sudo bash monster/setup.sh <owner> <key-file>; sudo bash monster/install-root.sh
+   ssh admin@monday 'sudo bash /root/MyMonday/server/bootstrap.sh admin workstation'   # prints the public key(s)
+   # on the workstation: sudo bash workstation/setup.sh <owner> <key-file>; sudo bash workstation/install-root.sh
    ssh admin@monday 'sudo bash /root/MyMonday/server/bootstrap.sh admin ops'       # cron + Hermes cron jobs
    ```
 
@@ -288,7 +288,7 @@ sudo -u monday -H git -c user.name=Monday -c user.email=monday@monday.local -C /
 | memory | gitleaks release binary (pinned version, sha256-checked) in `/usr/local/bin`; `BRAIN_DIR` and the repos `brain-core`, `brain-private`, `brain-sensitive`, `brain-raw` (git, gitleaks pre-commit hook; created only with `CREATE_VAULT=yes`), `brain-core/SCHEMA.md` on first run, `brain-raw/.gitignore` with `*.quarantine/`, skill `personal-memory-vault`; `uv tool install basic-memory==<pinned>` (if missing), Basic Memory projects `brain-core`, `brain-private` and `brain-sensitive` (repo created on first run, with the gitleaks hook), `basic-memory reindex`, Hermes MCP server `brain`, gateway restart, `/usr/local/bin/brain-autocommit` + user timer `brain-autocommit.timer` |
 | service | `loginctl enable-linger monday`; `hermes gateway install` (systemd user unit, starts at boot) |
 | desktop | apt xvfb x11vnc novnc websockify; user units `xvfb`, `x11vnc`, `novnc`, `vnc-chromium`, `hermes-webui` in `/etc/systemd/user` (ConditionUser, hand-made copies in `~monday/.config/systemd/user` removed); `~monday/apps/hermes-webui` cloned at a pinned commit; `tailscale serve` :443 → webui, :6080 off |
-| monster | `~/.hermes/skills/monster` (+ references; a live `references/local.md` is kept), `/usr/local/bin/monster-wake`; for the agent: keys `id_ed25519_monster` (+ `id_ed25519_mac` when `MAC_HOST` is set), a managed block in `~/.ssh/config` with `monster`, `monster-phone1/2` (when set) and `mac` (rest of the file kept) |
+| workstation | `~/.hermes/skills/workstation` (+ references; a live `references/local.md` is kept), `/usr/local/bin/workstation-wake`; for the agent: keys `id_ed25519_workstation` (+ `id_ed25519_mac` when `MAC_HOST` is set), a managed block in `~/.ssh/config` with the workstation alias (`WORKSTATION_SSH_ALIAS`, default `workstation`), `<alias>-phone1/2` (when set) and `mac` (rest of the file kept) |
 | ops | `OPS_DIR` (scripts + `local.env` copy + `state/`), `~/.hermes/scripts/{spend_summary.sh,brain_nightly.py}` wrappers, the managed block in the agent's crontab (`server/ops/crontab.in`), Hermes cron jobs via `server/ops/hermes-cron.sh` (created once) |
 | lockdown | removes `/etc/sudoers.d/90-<admin>` (sudo then asks for the password), marker `/etc/mymonday/sudo-password-required`, 10-minute revert timer `mymonday-sudo-revert` |
 | backup | `/usr/local/sbin/mymonday-backup`, `mymonday-backup.{service,timer}` (+ drop-in with the user names), `/etc/mymonday` (700), generated `restic.pass`; `restic init` and the timer once `restic.env` exists |
@@ -367,5 +367,5 @@ maintainer scripts as root.
 
 ## Open items
 
-- Second phone as a backup waker (`MONSTER_PHONE2`).
+- Second phone as a backup waker (`WORKSTATION_PHONE2`).
 - Turkish-aware lexical search in Basic Memory (upstream; see the personal-memory-vault skill).

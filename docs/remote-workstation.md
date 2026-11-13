@@ -1,4 +1,4 @@
-# Remote workstation ("Monster")
+# Remote workstation
 
 The server assistant drives a Linux workstation at the owner's home: it wakes it, runs Claude Code
 project leads on it, relays their questions to Telegram, parks them at night and powers the machine
@@ -8,14 +8,14 @@ owner, with the owner's Claude accounts, git keys and project credentials.
 ```mermaid
 flowchart LR
     subgraph server["server (always on)"]
-        hermes["assistant (Hermes)<br/>user monday"] -->|"ssh monster &lt;verb&gt;"| key1(("key → monster-ctl"))
+        hermes["assistant (Hermes)<br/>user monday"] -->|"ssh workstation &lt;verb&gt;"| key1(("key → workstation-ctl"))
         cron["cron: lead_watch"] --> key1
-        hermes -->|monster-wake| key2(("key → wol.py"))
+        hermes -->|workstation-wake| key2(("key → wol.py"))
     end
     subgraph home["owner's home LAN"]
         phone["phone waker<br/>Termux sshd"] -->|"WoL broadcast"| ws
         subgraph ws["workstation, user = owner"]
-            ctl["monster-ctl<br/>(forced command)"] --> leads["tmux -L monster<br/>session leads: one window per lead"]
+            ctl["workstation-ctl<br/>(forced command)"] --> leads["tmux -L leads<br/>session leads: one window per lead"]
             ccgram["CCGram"] --> leads
             leads --> hook["notify hook → events.jsonl"]
         end
@@ -28,21 +28,21 @@ flowchart LR
 
 ## Install
 
-On the server (`local.env`: `MONSTER_HOST`, `MONSTER_USER`, `SERVER_IP`, optional `MONSTER_PHONE1/2`, ...):
+On the server (`local.env`: `WORKSTATION_HOST`, `WORKSTATION_USER`, `SERVER_IP`, optional `WORKSTATION_PHONE1/2`, ...):
 
 ```sh
-sudo bash server/bootstrap.sh <admin> monster   # assistant keys, ssh aliases, skill, monster-wake
+sudo bash server/bootstrap.sh <admin> workstation   # assistant keys, ssh aliases, skill, workstation-wake
 sudo bash server/bootstrap.sh <admin> ops       # lead_watch cron, Hermes cron jobs
 ```
 
-On the workstation, from a checkout with the same `local.env` (`MONSTER_PROJECTS`, `LEADS_KIT_*`,
-`TELEGRAM_USER_ID`, `SERVER_IP`, optional `NOTIFY_LANG`, `LEAD_CLAUDE_VERSION`, `MONSTER_CCGRAM`):
+On the workstation, from a checkout with the same `local.env` (`WORKSTATION_PROJECTS`, `LEADS_KIT_*`,
+`TELEGRAM_USER_ID`, `SERVER_IP`, optional `NOTIFY_LANG`, `LEAD_CLAUDE_VERSION`, `WORKSTATION_CCGRAM`):
 
 ```sh
-sudo bash monster/setup.sh <owner> monday.pub     # forced-command key, sudo for poweroff/suspend, idle-off, monday-grant
-sudo bash monster/install-root.sh <owner>         # monster-ctl, monday-root + allow lists + sudoers rule
-bash monster/install-user.sh                      # (also run by setup.sh) monday-leads, hook, tmux conf, CCGram
-bash monster/test-leads.sh && bash monster/test-monday-root.sh
+sudo bash workstation/setup.sh <owner> monday.pub     # forced-command key, sudo for poweroff/suspend, idle-off, monday-grant
+sudo bash workstation/install-root.sh <owner>         # workstation-ctl, monday-root + allow lists + sudoers rule
+bash workstation/install-user.sh                      # (also run by setup.sh) monday-leads, hook, tmux conf, CCGram
+bash workstation/test-leads.sh && bash workstation/test-monday-root.sh
 ```
 
 Requirements on the workstation: tmux, jq, python3, git, Claude Code (native installer), uv (for
@@ -55,11 +55,11 @@ exists. Use a separate bot from the assistant's.
 
 ## Command surface
 
-Everything the server can do on the workstation is one script, `monster-ctl`, run as the forced command
-of the server's key (`from="<server tailnet IP>",command="/usr/local/bin/monster-ctl --ssh",restrict`):
+Everything the server can do on the workstation is one script, `workstation-ctl`, run as the forced command
+of the server's key (`from="<server tailnet IP>",command="/usr/local/bin/workstation-ctl --ssh",restrict`):
 status, projects, helper sessions (`start/read/send/answer/key/stop`), `lead ...` (see
 [leads.md](leads.md)), `sleep/off/reboot` behind a power guard, `root pkg-install|service-restart`
-for allow-listed names only. Every word is validated by regex and `monster-ctl` never evaluates its
+for allow-listed names only. Every word is validated by regex and `workstation-ctl` never evaluates its
 input as shell code; journald logs verbs and names but never the text sent. What it types, though, lands
 in sessions running as the owner: a Claude Code prompt, the login shell of a helper session once claude
 exits, and `send --allow-bang` text runs as a shell command on purpose. The key is effectively a shell
@@ -67,7 +67,7 @@ as the owner (see Security model).
 
 ## Power
 
-- **Wake:** `monster-wake` asks the phone waker (Wake-on-LAN cannot cross the internet).
+- **Wake:** `workstation-wake` asks the phone waker (Wake-on-LAN cannot cross the internet).
 - **Guard:** `off`, `reboot`, `sleep` and the idle timer refuse while a Claude session or background
   worker is working or waiting on a question, or a kit lock is held by a live pid
   (`monday-leads power-check`). Idle sessions do not block: transcripts are on disk and resume by id.
@@ -84,7 +84,7 @@ as the owner (see Security model).
 
 What the server's workstation key can do, by construction:
 
-- Log in only from the server's tailnet address, only into `monster-ctl`; no login shell of its own, no
+- Log in only from the server's tailnet address, only into `workstation-ctl`; no login shell of its own, no
   forwarding, no pty. Through the sessions below it is still effectively a shell as the owner.
 - Type into Claude Code sessions that run **as the owner**. This is the accepted, central risk: text the
   assistant sends acts with the owner's rights (projects, git keys, credentials those projects hold).
@@ -99,7 +99,7 @@ What the server's workstation key can do, by construction:
 Mitigations: the owner is out of the `docker` group (= root); sudo needs the owner's password; leads
 work on branches and never push without the owner (a rule the assistant follows, not a hard control);
 Telegram-started sessions are limited to the projects root and refuse permission bypass flags; the
-key cannot change `monster-ctl`, `monday-root`, the allow lists or the sudoers rules (root-owned; sudo
+key cannot change `workstation-ctl`, `monday-root`, the allow lists or the sudoers rules (root-owned; sudo
 needs the owner's password); the phone and Mac keys are forced to single-purpose scripts that cannot
 update themselves. Not mitigated: anything a
 Claude session can do as the owner. Keep high-value credentials (password manager, cloud root keys)

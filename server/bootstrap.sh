@@ -28,17 +28,18 @@
 #   desktop   visible browser for AGENT_USER: Xvfb, x11vnc + noVNC (loopback only), Chromium with
 #             CDP, and Hermes WebUI on the tailnet (tailscale serve :443). Run after `service`.
 #   service   run the Hermes gateway as AGENT_USER's service that survives reboot
-#   monster   SSH keys + `ssh monster`, phone and (optional) `ssh mac` aliases for AGENT_USER and the
-#             monster skill (the owner's workstation; its side is monster/setup.sh). Prints the public keys.
+#   workstation  SSH keys + `ssh <WORKSTATION_SSH_ALIAS>` (default workstation), waker phone and
+#             (optional) `ssh mac` aliases for AGENT_USER, the workstation skill and workstation-wake (the
+#             owner's main work PC; its side is workstation/setup.sh). Prints the public keys.
 #   ops       server/ops jobs in OPS_DIR (lead notifications, spend summary, nightly memory capture),
-#             AGENT_USER's crontab block and Hermes cron jobs. After monster.
+#             AGENT_USER's crontab block and Hermes cron jobs. After workstation.
 #   backup    nightly encrypted restic backup to R2 as root. Enables the timer once
 #             /etc/mymonday/restic.env (R2 credentials, entered by hand) exists.
 #   lockdown  last step: <admin-user>'s sudo requires its password. Needs a password set and
 #             CONFIRMED_SUDO_PASSWORD=yes; restores itself in 10 min unless cancelled.
 #
 # With no phase given, runs: base user tailscale agent userland hermes persona
-# (harden, routing, memory, service, desktop, monster, ops, backup and lockdown are always explicit: they need a human step first).
+# (harden, routing, memory, service, desktop, workstation, ops, backup and lockdown are always explicit: they need a human step first).
 #
 # Environment overrides:
 #   AGENT_USER        default: monday
@@ -47,8 +48,8 @@
 #   SERVER_TIMEZONE   default: UTC
 #   SWAP_SIZE         default: 2G
 #   BRAIN_DIR         default: PROJECTS_DIR/brain;  OPS_DIR default: PROJECTS_DIR/monday-ops
-#   OWNER_NAME, ASSISTANT_LANGUAGE, ASSISTANT_WELCOME (persona), MONSTER_HOST/USER, optional
-#   MONSTER_PHONE1/2 and MAC_HOST/USER (monster):
+#   OWNER_NAME, ASSISTANT_LANGUAGE, ASSISTANT_WELCOME (persona), WORKSTATION_HOST/USER, optional
+#   WORKSTATION_SSH_ALIAS, WORKSTATION_PHONE1/2 and MAC_HOST/USER (workstation):
 #   personal values, read from local.env next to this repo's README
 #   (git-ignored; template local.env.example). A key set in local.env wins over the same
 #   variable in the environment: one source of truth.
@@ -78,6 +79,15 @@ SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 LOCAL_ENV="$SCRIPT_DIR/../local.env"
 # shellcheck disable=SC1090  # personal values, not in git
 [ -f "$LOCAL_ENV" ] && . "$LOCAL_ENV"
+# Keys renamed MONSTER_* -> WORKSTATION_*: an older local.env is read for one release (docs/migration.md).
+# Its ssh alias was the old one, so that stays the default for such a file.
+legacy_env=""
+for k in HOST USER PROJECTS PHONE1 PHONE2 CCGRAM SSH_ALIAS; do
+  o="MONSTER_$k" n="WORKSTATION_$k"
+  if [ -z "${!n:-}" ] && [ -n "${!o:-}" ]; then printf -v "$n" '%s' "${!o}"; legacy_env=1; fi
+done
+unset k o n
+[ -z "$legacy_env" ] || [ -n "${WORKSTATION_SSH_ALIAS:-}" ] || WORKSTATION_SSH_ALIAS=monster
 SERVER_HOSTNAME="${SERVER_HOSTNAME:-monday}"
 SERVER_TIMEZONE="${SERVER_TIMEZONE:-UTC}"
 SWAP_SIZE="${SWAP_SIZE:-2G}"
@@ -418,13 +428,14 @@ install_gitleaks() {
 
 BASIC_MEMORY_VERSION=1.0.0
 
-# install_skill <name> <dest under ~/.hermes/skills>: SKILL.md + references/*.md of server/hermes/skills/<name>,
-# written as the agent. references/local.md (the owner's private rules, git-ignored) is never overwritten:
+# install_skill <name> <dest under ~/.hermes/skills> [sed script]: SKILL.md (through the optional sed
+# script, e.g. the configured ssh alias) + references/*.md of server/hermes/skills/<name>, written as
+# the agent. references/local.md (the owner's private rules, git-ignored) is never overwritten:
 # a copy in the repo tree is installed only when the live skill has none.
 install_skill() {
   local src="$SCRIPT_DIR/hermes/skills/$1" dst; dst="$(home_of "$AGENT_USER")/.hermes/skills/$2"
   local f to
-  agent_install 644 "$dst/SKILL.md" < "$src/SKILL.md"
+  sed "${3:-}" "$src/SKILL.md" | agent_install 644 "$dst/SKILL.md"
   for f in "$src/references/"*.md; do
     [ -e "$f" ] || continue
     to="$dst/references/${f##*/}"
@@ -569,33 +580,47 @@ phase_service() {
   '
 }
 
-phase_monster() {
+phase_workstation() {
   require_agent
-  log "monster: ssh aliases and skill for $AGENT_USER"
-  local host="${MONSTER_HOST:?set MONSTER_HOST in local.env}" user="${MONSTER_USER:?set MONSTER_USER in local.env}"
-  local phone1="${MONSTER_PHONE1:-}" phone2="${MONSTER_PHONE2:-}"   # optional wakers (monster-wake)
+  log "workstation: ssh aliases and skill for $AGENT_USER"
+  local host="${WORKSTATION_HOST:?set WORKSTATION_HOST in local.env}" user="${WORKSTATION_USER:?set WORKSTATION_USER in local.env}"
+  local phone1="${WORKSTATION_PHONE1:-}" phone2="${WORKSTATION_PHONE2:-}"   # optional wakers (workstation-wake)
+  local alias="${WORKSTATION_SSH_ALIAS:-workstation}"
+  [[ "$alias" =~ ^[A-Za-z0-9][A-Za-z0-9_.-]*$ ]] || die "WORKSTATION_SSH_ALIAS: letters, digits, . _ - only"
   local mac="${MAC_HOST:-}" macuser="${MAC_USER:-}"
   # the skill and its references (procedures only; personal values stay in local.env / ~/.ssh/config,
   # the owner's private rules in the live references/local.md, which is kept)
-  install_skill monster monster
-  install -m 755 "$SCRIPT_DIR/monster/monster-wake" /usr/local/bin/monster-wake
-  as_agent "HOST='$host' USER_M='$user' P1='$phone1' P2='$phone2' MAC='$mac' MACUSER='$macuser'"'
+  # (its `ssh workstation <verb>` lines are written with the configured alias)
+  install_skill workstation workstation "s/ssh workstation /ssh $alias /g"
+  [ ! -d "$(home_of "$AGENT_USER")/.hermes/skills/monster" ] || echo "note: the skill was renamed: move references/local.md of ~/.hermes/skills/monster to ~/.hermes/skills/workstation, then remove the old skill (docs/migration.md)"
+  sed "s/^WAKERS_DEFAULT=.*/WAKERS_DEFAULT=\"$alias-phone1 $alias-phone2\"/" "$SCRIPT_DIR/workstation/workstation-wake" > /usr/local/bin/workstation-wake
+  chmod 755 /usr/local/bin/workstation-wake
+  # an install from before the rename: the old command name keeps working (docs/migration.md)
+  if [ -e /usr/local/bin/monster-wake ] && [ ! -L /usr/local/bin/monster-wake ]; then
+    ln -sf workstation-wake /usr/local/bin/monster-wake
+  fi
+  as_agent "HOST='$host' USER_M='$user' P1='$phone1' P2='$phone2' MAC='$mac' MACUSER='$macuser' A='$alias'"'
     set -euo pipefail
     install -d -m 700 ~/.ssh
-    [ -f ~/.ssh/id_ed25519_monster ] || ssh-keygen -q -t ed25519 -N "" -C monday@monday -f ~/.ssh/id_ed25519_monster
+    # the key of an install from before the rename is kept (the workstation and phones already trust it)
+    if [ ! -f ~/.ssh/id_ed25519_workstation ] && [ -f ~/.ssh/id_ed25519_monster ]; then
+      cp -p ~/.ssh/id_ed25519_monster ~/.ssh/id_ed25519_workstation
+      cp -p ~/.ssh/id_ed25519_monster.pub ~/.ssh/id_ed25519_workstation.pub
+    fi
+    [ -f ~/.ssh/id_ed25519_workstation ] || ssh-keygen -q -t ed25519 -N "" -C monday@monday -f ~/.ssh/id_ed25519_workstation
     # ~/.ssh/config: only the managed block is replaced; anything else in the file stays (block first,
     # so its values win: ssh keeps the first value it reads)
     touch ~/.ssh/config; chmod 600 ~/.ssh/config
     # a config written whole by an older version of this phase (no markers): keep a copy, start fresh
-    if ! grep -q "^# BEGIN MyMonday" ~/.ssh/config && [ "$(head -n 1 ~/.ssh/config)" = "Host monster" ]; then
+    if ! grep -q "^# BEGIN MyMonday" ~/.ssh/config && [ "$(head -n 1 ~/.ssh/config)" = "Host $A" ]; then
       cp -p ~/.ssh/config ~/.ssh/config.bak-mymonday; : > ~/.ssh/config
     fi
     {
-      echo "# BEGIN MyMonday (bootstrap.sh monster; edits inside this block are replaced)"
-      printf "Host monster\n  HostName %s\n  User %s\n\n" "$HOST" "$USER_M"
-      [ -z "$P1" ] || printf "Host monster-phone1\n  HostName %s\n  Port 8022\n\n" "$P1"
-      [ -z "$P2" ] || printf "Host monster-phone2\n  HostName %s\n  Port 8022\n\n" "$P2"
-      printf "Host monster monster-phone*\n  IdentityFile ~/.ssh/id_ed25519_monster\n  IdentitiesOnly yes\n  ConnectTimeout 10\n  StrictHostKeyChecking accept-new\n"
+      echo "# BEGIN MyMonday (bootstrap.sh workstation; edits inside this block are replaced)"
+      printf "Host %s\n  HostName %s\n  User %s\n\n" "$A" "$HOST" "$USER_M"
+      [ -z "$P1" ] || printf "Host %s-phone1\n  HostName %s\n  Port 8022\n\n" "$A" "$P1"
+      [ -z "$P2" ] || printf "Host %s-phone2\n  HostName %s\n  Port 8022\n\n" "$A" "$P2"
+      printf "Host %s %s-phone*\n  IdentityFile ~/.ssh/id_ed25519_workstation\n  IdentitiesOnly yes\n  ConnectTimeout 10\n  StrictHostKeyChecking accept-new\n" "$A" "$A"
       if [ -n "$MAC" ]; then
         # the Mac client (clients/mac): its own key, forced to mac-ctl there
         printf "\nHost mac\n  HostName %s\n  User %s\n  IdentityFile ~/.ssh/id_ed25519_mac\n  IdentitiesOnly yes\n  ConnectTimeout 10\n  StrictHostKeyChecking accept-new\n" "$MAC" "$MACUSER"
@@ -604,7 +629,7 @@ phase_monster() {
       sed "/^# BEGIN MyMonday/,/^# END MyMonday/d" ~/.ssh/config
     } > ~/.ssh/config.new
     chmod 600 ~/.ssh/config.new; mv ~/.ssh/config.new ~/.ssh/config
-    echo "workstation + phone key:"; cat ~/.ssh/id_ed25519_monster.pub
+    echo "workstation + phone key:"; cat ~/.ssh/id_ed25519_workstation.pub
     if [ -n "$MAC" ]; then
       [ -f ~/.ssh/id_ed25519_mac ] || ssh-keygen -q -t ed25519 -N "" -C monday-mac@monday -f ~/.ssh/id_ed25519_mac
       echo "Mac key (clients/mac/install.sh):"; cat ~/.ssh/id_ed25519_mac.pub
@@ -698,7 +723,8 @@ phase_backup() {
 
 for p in "${PHASES[@]}"; do
   case "$p" in
-    base|user|tailscale|harden|agent|userland|hermes|persona|routing|memory|service|desktop|monster|ops|backup|lockdown) "phase_$p" ;;
+    base|user|tailscale|harden|agent|userland|hermes|persona|routing|memory|service|desktop|workstation|ops|backup|lockdown) "phase_$p" ;;
+    monster) log "phase monster is now called workstation"; phase_workstation ;;   # pre-rename name, one release
     *) die "unknown phase: $p" ;;
   esac
 done

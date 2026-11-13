@@ -2,14 +2,14 @@
 
 A Wake-on-LAN magic packet is a layer-2 broadcast: it cannot cross the internet or a Tailscale tunnel.
 Something already awake on the workstation's LAN has to send it. Here that is an old Android phone,
-always on charge, running Termux sshd on the tailnet. The server's `monster-wake` connects to it and
+always on charge, running Termux sshd on the tailnet. The server's `workstation-wake` connects to it and
 the phone's forced command sends the packet.
 
 ```
-server: monster-wake ──ssh (tailnet, key only)──▶ phone :8022 ── forced command wol.py ──▶ LAN broadcast ──▶ workstation NIC
+server: workstation-wake ──ssh (tailnet, key only)──▶ phone :8022 ── forced command wol.py ──▶ LAN broadcast ──▶ workstation NIC
 ```
 
-`monster-wake` (server/monster/monster-wake) tries `monster-phone1`, then `monster-phone2`, and succeeds
+`workstation-wake` (server/workstation/workstation-wake) tries `workstation-phone1`, then `workstation-phone2`, and succeeds
 when the reply contains `wake sent`. A second phone is optional redundancy.
 
 ## What you need
@@ -18,7 +18,7 @@ when the reply contains `wake sent`. A second phone is optional redundancy.
 - The workstation's wired NIC MAC address, and Wake-on-LAN enabled in its BIOS/UEFI and OS
   (`ethtool <nic> | grep Wake-on` shows `g`; NetworkManager: `nmcli c modify <conn> 802-3-ethernet.wake-on-lan magic`).
   Wi-Fi WoL is unreliable; use Ethernet.
-- The server's workstation key (printed by `bootstrap.sh <admin> monster`, `~/.ssh/id_ed25519_monster.pub`
+- The server's workstation key (printed by `bootstrap.sh <admin> workstation`, `~/.ssh/id_ed25519_workstation.pub`
   of the agent user) and the server's tailnet IP (`SERVER_IP` in local.env).
 
 ## Setup
@@ -27,7 +27,7 @@ when the reply contains `wake sent`. A second phone is optional redundancy.
    from the same source. Open Termux:Boot once so Android registers it.
 2. **Tailscale** Android app: log in to your tailnet, enable *Always-on VPN* (Android Settings > Network
    > VPN > Tailscale > Always-on) so it reconnects after reboots. Note the phone's tailnet IP: it is
-   `MONSTER_PHONE1` in local.env.
+   `WORKSTATION_PHONE1` in local.env.
 3. **Battery**: Settings > Apps > Termux, Termux:Boot and Tailscale > Battery > *Unrestricted* / no
    optimisation. On MIUI/HyperOS also enable *Autostart* for all three and lock Termux in the recents
    screen. Without this Android kills sshd within hours.
@@ -41,7 +41,7 @@ when the reply contains `wake sent`. A second phone is optional redundancy.
    It installs `openssh` and `python`, puts `wol.py` and the boot script in place, writes
    `~/.config/wol.env`, adds the key as `from="<server>",command="python3 ~/wol.py",restrict` and turns
    password login off. `termux-wake-lock` in the boot script keeps the CPU awake.
-5. From the server, as the agent user: `monster-wake` → `wake sent via monster-phone1`.
+5. From the server, as the agent user: `workstation-wake` → `wake sent via workstation-phone1`.
    Then power the workstation off and test a real wake.
 
 ## Security

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Poll the workstation's lead events (ssh monster lead events OFFSET) and push them to Telegram.
+"""Poll the workstation's lead events (ssh workstation lead events OFFSET) and push them to Telegram.
 Cron: every minute (server/ops/crontab.in, killed after 50 s; this script stops new work at ~42 s).
 
 Events come from ~/.claude/notify.sh on the workstation (claude running in the tmux session "leads"):
@@ -24,13 +24,13 @@ Rules: only registered leads; events older than MAX_AGE are dropped (e.g. after 
 Delivery: every notice goes to an outbox saved in the state file together with the event offset, then
 is sent; a failed send stays queued and is retried next run (dropped after OUTBOX_MAX_AGE), so a
 Telegram error never loses an event and a crash never repeats one.
-Monster off/asleep (ssh rc 255) is silent; if Tailscale still shows the workstation online while ssh
+The workstation off/asleep (ssh rc 255) is silent; if Tailscale still shows the workstation online while ssh
 fails for 30+ min, one notice. Limitation: when Tailscale itself is down on the workstation an ssh
 breakage looks like "off" and stays silent. 3 consecutive other failures -> one alert.
 Mute: lead names or `all` in state/lead_watch.mute.
 """
 import fcntl, json, os, re, subprocess, time
-from common import STATE_DIR, conf, ssh_monster, t
+from common import STATE_DIR, conf, ssh_workstation, t
 from common import notify as _send
 
 S = STATE_DIR
@@ -38,12 +38,12 @@ STATE, LOCK = f"{S}/lead_watch.json", f"{S}/lead_watch.lock"
 MUTE_FILE, MODE_FILE = f"{S}/lead_watch.mute", f"{S}/lead_watch.mode"
 WORK_MODE_FILE = f"{S}/work_mode"
 MAC_IP, MAC_PREFIX = conf("MAC_HOST"), conf("MAC_HOSTNAME_PREFIX", "macbook").lower()
-MONSTER_IP = conf("MONSTER_HOST")
+WORKSTATION_IP = conf("WORKSTATION_HOST")
 MAX_AGE = 30 * 60            # older events are not pushed
 DELAY = 15 * 60              # mode 2: a finished turn is reported after this
 WAIT_EXIT = 30 * 60          # mode 2 ends when a lead waits this long
 REMIND_FIRST, REMIND_EVERY = 15 * 60, 30 * 60
-UNREACH = 30 * 60            # Monster online on the tailnet, ssh failing: one notice after this
+UNREACH = 30 * 60            # workstation online on the tailnet, ssh failing: one notice after this
 OUTBOX_MAX_AGE = 6 * 3600
 DEADLINE_S = 42              # cron's timeout is 50 s
 EVENTS = ("permission", "question", "stop", "failure", "ended")
@@ -63,7 +63,7 @@ def ssh(*args, timeout=15):
     tmo = min(timeout, left())
     if tmo < 3:
         raise subprocess.TimeoutExpired("ssh", 0)
-    return ssh_monster(*args, timeout=tmo)
+    return ssh_workstation(*args, timeout=tmo)
 
 
 def log(text):
@@ -319,12 +319,12 @@ def mac_offline():
     return bool(mac) and not mac[0].get("Online", False)
 
 
-def monster_online():
-    return bool(MONSTER_IP) and any(MONSTER_IP in p.get("TailscaleIPs", []) and p.get("Online") for p in peers())
+def workstation_online():
+    return bool(WORKSTATION_IP) and any(WORKSTATION_IP in p.get("TailscaleIPs", []) and p.get("Online") for p in peers())
 
 
 def check_mode2_exit(st, now, up, busy):
-    """Every 2 min in mode 2: leave it when the Mac is offline or (Monster up) a lead waits WAIT_EXIT+."""
+    """Every 2 min in mode 2: leave it when the Mac is offline or (workstation up) a lead waits WAIT_EXIT+."""
     if readf(WORK_MODE_FILE, "1") != "2" or now - st.get("mac_check", 0) <= 120:
         return
     st["mac_check"] = now
@@ -375,9 +375,9 @@ def run():
         rc2, lst = ssh("lead", "list") if rc == 0 else (rc, "")
     except subprocess.TimeoutExpired:
         rc, out, rc2, lst = 1, "", 1, ""
-    if rc == 255:  # Monster off / asleep, or ssh broken: told apart through Tailscale
+    if rc == 255:  # workstation off / asleep, or ssh broken: told apart through Tailscale
         st["fails"] = 0
-        if monster_online():
+        if workstation_online():
             st.setdefault("unreach_since", now)
             if now - st["unreach_since"] >= UNREACH and not st.get("unreach_told"):
                 queue(st, t("ssh_broken", mins=int((now - st["unreach_since"]) // 60)), now)

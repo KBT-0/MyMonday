@@ -1,7 +1,8 @@
-# systemd user unit: CCGram, one Telegram topic per window of session "leads" on `tmux -L monster`
+# systemd user unit: CCGram, one Telegram topic per window of session "leads" on the lead tmux server
+# (`tmux -L leads`; install-user.sh writes the LEADS_SOCKET of workstation.env into the lines below)
 # (installed to ~/.config/systemd/user and enabled by install-user.sh). Config: ~/.config/monday/ccgram.env.
 [Unit]
-Description=CCGram: Telegram topics for the project leads (tmux -L monster, session leads)
+Description=CCGram: Telegram topics for the project leads (tmux -L leads, session leads)
 # the user manager has no network-online.target (both lines are no-ops there); the DNS wait below is the guard
 After=network-online.target
 Wants=network-online.target
@@ -10,9 +11,9 @@ Wants=network-online.target
 # all of it in the env before start: ccgram reads TMUX_SESSION_NAME before it loads its .env
 EnvironmentFile=%h/.config/monday/ccgram.env
 # ccgram calls tmux without -L/-S, so tmux follows $TMUX to the lead server
-Environment=TMUX=/tmp/tmux-%U/monster,0,0
+Environment=TMUX=/tmp/tmux-%U/leads,0,0
 # create the lead server with its config (allow-rename off etc.) when it is not running; ccgram would not
-ExecStartPre=/bin/sh -c 'tmux -L monster has-session -t =leads 2>/dev/null || tmux -L monster -f %h/.config/monday/lead-tmux.conf new-session -d -s leads -n __main__ -c %h'
+ExecStartPre=/bin/sh -c 'tmux -L leads has-session -t =leads 2>/dev/null || tmux -L leads -f %h/.config/monday/lead-tmux.conf new-session -d -s leads -n __main__ -c %h'
 # at boot DNS comes up after the user manager: ccgram's first getMe died on "Temporary failure in name resolution"
 ExecStartPre=/usr/bin/timeout 60 /bin/sh -c 'until getent hosts api.telegram.org >/dev/null; do sleep 1; done'
 ExecStart=%h/.local/bin/ccgram run

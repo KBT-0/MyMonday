@@ -1,24 +1,24 @@
 #!/bin/zsh
-# install.sh: set up a Mac as the owner's terminal client for Monster ("mode 2"). Idempotent, no sudo.
-#   zsh clients/mac/install.sh --monster <user>@<workstation-tailnet-ip> --key '<ssh-ed25519 ... monday-mac@monday>' \
+# install.sh: set up a Mac as the owner's terminal client for the workstation ("mode 2"). Idempotent, no sudo.
+#   zsh clients/mac/install.sh --workstation <user>@<workstation-tailnet-ip> --key '<ssh-ed25519 ... monday-mac@monday>' \
 #       [--from <server-tailnet-ip>]
-# --key is the server assistant's Mac PUBLIC key (printed by `bootstrap.sh <admin> monster` when MAC_HOST
+# --key is the server assistant's Mac PUBLIC key (printed by `bootstrap.sh <admin> workstation` when MAC_HOST
 # is set). --from limits that key to the server's tailnet address (recommended).
 # Does: Homebrew mosh, ~/bin/mac-ctl, ~/.config/monday-mac/mac.env, the iTerm2 dynamic profile for native
 # full screen, and the forced-command line in ~/.ssh/authorized_keys. Remote Login (System Settings >
 # General > Sharing) and Tailscale are yours to switch on; see clients/mac/README.md.
 set -eu
 here=${0:A:h}
-monster="" key="" from=""
+workstation="" key="" from=""
 while (( $# )); do
   case $1 in
-    --monster) monster=$2; shift 2 ;;
+    --workstation|--monster) workstation=$2; shift 2 ;;   # --monster: its pre-rename name, one release
     --key) key=$2; shift 2 ;;
     --from) from=$2; shift 2 ;;
     *) echo "unknown argument: $1" >&2; exit 2 ;;
   esac
 done
-[[ $monster == *@* ]] || { echo "--monster user@ip required" >&2; exit 2; }
+[[ $workstation == *@* ]] || { echo "--workstation user@ip required" >&2; exit 2; }
 [[ $key == ssh-ed25519\ * ]] || { echo "--key must be an ssh-ed25519 PUBLIC key line" >&2; exit 2; }
 
 # mosh (the lead windows survive Wi-Fi changes and sleep), from Homebrew
@@ -31,7 +31,7 @@ fi
 install -d -m 755 "$HOME/bin"
 install -m 755 "$here/mac-ctl" "$HOME/bin/mac-ctl"
 install -d -m 700 "$HOME/.config/monday-mac"
-print -r -- "MONSTER_HOST=$monster" > "$HOME/.config/monday-mac/mac.env"
+print -r -- "WORKSTATION_HOST=$workstation" > "$HOME/.config/monday-mac/mac.env"
 chmod 600 "$HOME/.config/monday-mac/mac.env"
 
 # iTerm2 dynamic profile "Monday Lead Fullscreen": the default profile + Window Type 4 (native full screen)

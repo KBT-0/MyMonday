@@ -19,11 +19,11 @@ assistant arranges them: `ssh mac open`, `ssh mac save` before the workstation g
 2. System Settings > General > Sharing > **Remote Login** on (for your user only).
 3. iTerm2 (recommended; Terminal.app works for `open` only) and Homebrew.
 4. Your own SSH key from the Mac to the workstation (mac-ctl lists leads with it, mosh uses it).
-5. On the server, with `MAC_HOST` set: `sudo bash server/bootstrap.sh <admin> monster` prints the Mac key.
+5. On the server, with `MAC_HOST` set: `sudo bash server/bootstrap.sh <admin> workstation` prints the Mac key.
 6. On the Mac, from a checkout of this repo:
 
    ```sh
-   zsh clients/mac/install.sh --monster <MONSTER_USER>@<MONSTER_HOST> \
+   zsh clients/mac/install.sh --workstation <WORKSTATION_USER>@<WORKSTATION_HOST> \
        --key 'ssh-ed25519 AAAA... monday-mac@monday' --from <SERVER_IP>
    ~/bin/mac-ctl check
    ```

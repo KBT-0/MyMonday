@@ -1,14 +1,14 @@
-# Leads system on Monster (depth)
+# Leads system on the workstation (depth)
 
-Code: MyMonday repo, `monster/` (`monday-leads`, `claude-notify.sh`, `lead-env`, `lead-tmux.conf`,
-`mon`, `lead-claude`, `ccgram.service`, `idle-off`, `install-user.sh`). Changes to
-`/usr/local/bin/monster-ctl` and `/usr/local/sbin/monster-idle-off` need the owner's sudo
-(`install-root.sh`); everything else installs as the owner with `bash monster/install-user.sh`.
-Personal values on Monster: `~/.config/monday/monster.env` (MONSTER_DEV, LEADS_KIT_DIR/CMD).
+Code: MyMonday repo, `workstation/` (`monday-leads`, `claude-notify.sh`, `lead-env`, `lead-tmux.conf`,
+`lead-attach`, `lead-claude`, `ccgram.service`, `idle-off`, `install-user.sh`). Changes to
+`/usr/local/bin/workstation-ctl` and `/usr/local/sbin/workstation-idle-off` need the owner's sudo
+(`install-root.sh`); everything else installs as the owner with `bash workstation/install-user.sh`.
+Personal values on the workstation: `~/.config/monday/workstation.env` (WORKSTATION_DEV, LEADS_KIT_DIR/CMD, LEADS_SOCKET).
 
 ## Layout
-- tmux server `-L monster`, session `leads`, one window per lead (window name = registry key).
-  `__main__` window runs the CCGram service shell. Viewers (`mon NAME`, mac-leads) open grouped
+- tmux server `-L leads` (name: LEADS_SOCKET), session `leads`, one window per lead (window name = registry key).
+  `__main__` window runs the CCGram service shell. Viewers (`lead-attach NAME`, mac-leads) open grouped
   `view-*` sessions so each screen/device shows its own lead; status and CCGram ignore them.
 - Registry `~/.config/monday/leads.json`: key -> dir, worktree, claude_name, order, master_writer,
   state. `up` starts in `order`, verifies the pane still runs claude after ~8 s, keeps dead panes
@@ -17,7 +17,7 @@ Personal values on Monster: `~/.config/monday/monster.env` (MONSTER_DEV, LEADS_K
 - `lead-env`: PATH (fnm node, ~/.local/bin, ~/bin), SSH agent discovery, `DISABLE_AUTOUPDATER=1`,
   `LEAD_CLAUDE` pinned version path (bump after a manual `claude update`).
 
-## Commands (`ssh monster lead ...`)
+## Commands (`ssh workstation lead ...`)
 | Command | Does |
 |---|---|
 | `list` | leads in `order`: name, state, mode, running (yes/no/dead), last state + age |
@@ -36,7 +36,7 @@ Personal values on Monster: `~/.config/monday/monster.env` (MONSTER_DEV, LEADS_K
 
 ## Agent-kit projects (`<project>/$LEADS_KIT_DIR/`, read-only for you)
 Some projects run a coordination kit (a Claude Code plugin that keeps lead state in files). monday-leads
-reads it; nothing is copied. Its folder and slash-command namespace come from monster.env.
+reads it; nothing is copied. Its folder and slash-command namespace come from workstation.env.
 | Question | Source |
 |---|---|
 | who is lead / session id | `master-writer` (line 1 session id, line 2 SendMessage name) + `claude agents --json --all` |
@@ -66,7 +66,7 @@ saved continuously, so idle sessions resume by id after a cold boot.
    for every lead; ids change after `/clear` or a restart, and the registry goes stale silently.
 4. Copy each lead's last prompt to `~/.local/state/monday/handoffs/<date>/<lead>.prompt.txt`
    (extract from `~/.claude/projects/*/<id>.jsonl`); /tmp does not survive the reboot.
-5. `off` (the owner's OK for `--force`), wait ~1 min, `monster-wake`, poll `status` (~30 s to boot;
+5. `off` (the owner's OK for `--force`), wait ~1 min, `workstation-wake`, poll `status` (~30 s to boot;
    ccgram.service recreates `leads` via linger).
 6. Check that Claude works BEFORE `lead up`: a NEW helper session answers `Reply with just: ok`.
 7. `lead up` (master writer first). It starts a lead fresh from handoff-pending when one exists,
@@ -75,7 +75,7 @@ saved continuously, so idle sessions resume by id after a cold boot.
 8. `lead status --json` (all alive, states), read each window, report who waits for the owner.
 9. Git key: after any boot the ssh-agent is empty; if the owner's git key has a passphrase, leads cannot
    fetch/push until they load it. Tell them right after the wake. They run `ssh-add` in a PLAIN ssh
-   shell to Monster (with `SSH_AUTH_SOCK` pointing at the systemd user agent socket), not via `!` in a
+   shell to the workstation (with `SSH_AUTH_SOCK` pointing at the systemd user agent socket), not via `!` in a
    lead (no tty for the passphrase) and not in a new window of `leads` (CCGram turns every new window
    there into a Telegram topic).
 
@@ -86,7 +86,7 @@ saved continuously, so idle sessions resume by id after a cold boot.
   tailnet IP>` (background), have the owner run `curl -fsS http://<server tailnet IP>:8799/mac-ctl -o
   ~/bin/mac-ctl && ~/bin/mac-ctl check`, then kill the server. Restart it if it timed out
   (`curl -o /dev/null -w '%{http_code}'` first).
-- Windows open `mosh <user>@<Monster tailnet IP> -- mon <lead>`; use the IP, not a host name the Mac
+- Windows open `mosh <user>@<workstation tailnet IP> -- lead-attach <lead>`; use the IP, not a host name the Mac
   may not resolve or have a host key for.
 - Commands handed to iTerm/Terminal via osascript run without the login PATH: absolute paths
   (`$(command -v mosh) --client=$(command -v mosh-client)`), or the window opens and closes instantly
@@ -124,9 +124,9 @@ saved continuously, so idle sessions resume by id after a cold boot.
   Mute: names or `all` in `state/lead_watch.mute`.
 
 ## CCGram
-- `uv tool install ccgram==<pinned>` plus the local patch `monster/ccgram-patches/` (one Telegram button
+- `uv tool install ccgram==<pinned>` plus the local patch `workstation/ccgram-patches/` (one Telegram button
   per menu option, prompts ahead of the delivery queue; `apply.sh` refuses an unknown version). User unit
-  `ccgram.service` with `TMUX=/tmp/tmux-%U/monster,...` and `KillMode=process` (linger on). Config
+  `ccgram.service` with `TMUX=/tmp/tmux-%U/<LEADS_SOCKET>,...` and `KillMode=process` (linger on). Config
   `~/.config/monday/ccgram.env` (600; `~/.ccgram/.env` links to it): TELEGRAM_BOT_TOKEN, ALLOWED_USERS,
   TMUX_SESSION_NAME=leads, CCGRAM_GROUP_ID, CCGRAM_AUTODELETE_DEAD_TOPICS=false,
   CCGRAM_DEFAULT_MODE=normal, CCGRAM_PROJECTS_ROOTS. Never print the env file; check names only.

@@ -5,7 +5,7 @@ diff -ru a/ccgram/handlers/interactive/interactive_ui.py b/ccgram/handlers/inter
  _MULTI_SELECT_RE = re.compile(
      r"(?i)\b(?:select|choose|pick)\b[^\n]*(?:all|multiple|more than one)\b"
  )
-+# monster patch: Claude Code menus (tab header "☐ X", indented descriptions,
++# MyMonday patch: Claude Code menus (tab header "☐ X", indented descriptions,
 +# a ──── rule before "Chat about this", "[ ]" checkboxes for multiSelect).
 +_SEPARATOR_RE = re.compile(r"^\s*[─━]{3,}\s*$")
 +_OPTION_GLYPH_RE = re.compile(r"(?m)^\s*(?:[←→❯>]\s*)?\d+\.\s+[☐☑]")
@@ -59,7 +59,7 @@ diff -ru a/ccgram/handlers/interactive/interactive_ui.py b/ccgram/handlers/inter
 -        rows.append(
 -            [choice_btn(key, label) for key, label in direct_choices[start : start + 2]]
 -        )
-+    # monster patch: one full-width button per option; "Type something" /
++    # MyMonday patch: one full-width button per option; "Type something" /
 +    # "Chat about this" share the last row with Esc and refresh. Checkbox
 +    # menus (multiSelect) keep the full navigation keyboard for Submit.
 +    if direct_choices:
@@ -91,7 +91,7 @@ diff -ru a/ccgram/handlers/interactive/interactive_ui.py b/ccgram/handlers/inter
 -        thread_id=thread_id,
 -        window_id=window_id,
 -        now=now,
-+    # monster patch: a blocked agent's prompt goes ahead of background traffic
++    # MyMonday patch: a blocked agent's prompt goes ahead of background traffic
 +    from ...telegram_rate_limiter import interactive_priority
 +
 +    with interactive_priority():
@@ -107,7 +107,7 @@ diff -ru a/ccgram/handlers/interactive/interactive_ui.py b/ccgram/handlers/inter
 +            now=now,
 +        )
 +    logger.info(
-+        "monster: interactive UI keyboard window_id=%s buttons=%s",
++        "mymonday: interactive UI keyboard window_id=%s buttons=%s",
 +        window_id,
 +        [b.text for row in keyboard.inline_keyboard for b in row],
      )
@@ -121,7 +121,7 @@ diff -ru a/ccgram/handlers/messaging_pipeline/message_routing.py b/ccgram/handle
  # accept a possible reorder of the interactive UI relative to queued
  # content, rather than stall monitor dispatch for every other session.
 -_INTERACTIVE_QUEUE_JOIN_TIMEOUT_S = 90.0
-+_INTERACTIVE_QUEUE_JOIN_TIMEOUT_S = 5.0  # monster patch: a rate-limited queue held prompts ~90s
++_INTERACTIVE_QUEUE_JOIN_TIMEOUT_S = 5.0  # MyMonday patch: a rate-limited queue held prompts ~90s
  
  # One draft per session/topic. Provider updates are cumulative snapshots, not deltas.
  _DRAFT_TTL_SECONDS = 25.0

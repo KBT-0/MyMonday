@@ -1,5 +1,5 @@
 # /etc/sudoers.d/81-monday-root (root:root 440): Monday's allow-listed root actions.
-# sudo (>= 1.9.10, Monster has 1.9.17) allows exactly one command word and one name matching
+# sudo (>= 1.9.10, tested with 1.9.17) allows exactly one command word and one name matching
 # monday-root's own regex; monday-root then also checks the name against /etc/monday-root/.
 # Looser wildcard form (the trailing * matches anything, spaces and options included):
 #   OWNER ALL=(root) NOPASSWD: /usr/local/sbin/monday-root pkg-install *, /usr/local/sbin/monday-root service-restart *

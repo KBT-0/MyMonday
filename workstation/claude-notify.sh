@@ -3,12 +3,15 @@
 # shellcheck disable=SC1003  # the \\ in printf formats end the OSC sequences (ST), not a quote escape
 # Claude Code writes the returned terminalSequence to the terminal itself (no /dev/tty needed).
 input=$(cat)
-# personal values (MONSTER_DEV, LEADS_KIT_*): ~/.config/monday/monster.env, written by
-# install-user.sh from the repo's local.env; variables already in the environment win
-while IFS='=' read -r k v; do [ -n "${!k+x}" ] || export "$k=$v"; done \
-  < <(grep -E '^[A-Z_][A-Z0-9_]*=' "$HOME/.config/monday/monster.env" 2>/dev/null)
+# personal values (WORKSTATION_DEV, LEADS_KIT_*, LEADS_SOCKET): ~/.config/monday/workstation.env, written
+# by install-user.sh from the repo's local.env; variables already in the environment win. An install not
+# yet migrated: its pre-rename file and key names (monster.env, MONSTER_*) are read for one release.
+wenv=$HOME/.config/monday/workstation.env
+[ -f "$wenv" ] || { wenv=$HOME/.config/monday/monster.env; [ ! -f "$wenv" ] || export LEADS_SOCKET="${LEADS_SOCKET:-monster}"; }
+while IFS='=' read -r k v; do k=${k/#MONSTER_/WORKSTATION_}; [ -n "${!k+x}" ] || export "$k=$v"; done \
+  < <(grep -E '^[A-Z_][A-Z0-9_]*=' "$wenv" 2>/dev/null)
 q() { jq -r "$1 // empty" <<<"$input"; }
-# popup texts: NOTIFY_LANG in monster.env (from local.env): en (default) | tr
+# popup texts: NOTIFY_LANG in workstation.env (from local.env): en (default) | tr
 case ${NOTIFY_LANG:-en} in
   tr) t_fail="Hata ile durdu" t_stop="Cevabını bekliyor" t_question="Soru soruyor" t_perm="İzin bekliyor" ;;
   *)  t_fail="Stopped with an error" t_stop="Waiting for your reply" t_question="Asking a question" t_perm="Waiting for permission" ;;
@@ -35,16 +38,16 @@ event=$(q .hook_event_name)
 id=$(q .session_id | tr -cd 'a-zA-Z0-9-')
 emit() { jq -nc --arg seq "$1" '{terminalSequence: $seq}'; }
 
-# A lead: a window of session `leads` in `tmux -L monster` (see MyMonday monster/monday-leads). Log the
+# A lead: a window of session `leads` in `tmux -L leads` (see MyMonday workstation/monday-leads). Log the
 # event for Monday, write ~/.local/state/monday/leads/<lead>.json {state, ts, session_id} and keep the
 # lead's session_id in leads.json current, except in an agent-kit project (DIR/$LEADS_KIT_DIR: its master-writer is the truth).
 # Never fails the hook.
 argv0() { local a; a=$(tr '\0' '\n' < "/proc/$1/cmdline" | head -n1); echo "${a##*/}"; }
 ppid_of() { local s; s=$(<"/proc/$1/stat"); s=${s##*) }; s=${s#* }; echo "${s%% *}"; }
 lead_log() {
-  local sock=${LEADS_SOCKET:-monster} sess lead pp p st=$HOME/.local/state/monday reg=$HOME/.config/monday/leads.json
+  local sock=${LEADS_SOCKET:-leads} sess lead pp p st=$HOME/.local/state/monday reg=$HOME/.config/monday/leads.json
   case "$TMUX" in */"$sock",*) ;; *) return 0 ;; esac
-  # the group name: a viewer session (mon, mac-leads: view-*) grouped with `leads` shares its windows
+  # the group name: a viewer session (lead-attach, mac-leads: view-*) grouped with `leads` shares its windows
   read -r sess lead pp < <(tmux -L "$sock" display -p -t "$TMUX_PANE" '#{?session_grouped,#{session_group},#S} #W #{pane_pid}') || return 0
   [ "$sess" = leads ] && [[ "$lead" =~ ^[A-Za-z0-9_-]{1,32}$ ]] || return 0
   # only the lead's own claude: the pane process (monday-leads execs it), or the child of a shell pane;

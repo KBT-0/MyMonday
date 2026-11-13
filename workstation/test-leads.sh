@@ -1,20 +1,20 @@
 #!/usr/bin/env bash
-# test-leads.sh: monday-leads, the notify hook and monster-ctl against a fake claude (LEADS_CMD) on a
+# test-leads.sh: monday-leads, the notify hook and workstation-ctl against a fake claude (LEADS_CMD) on a
 # private tmux socket (LEADS_SOCKET) and a throwaway HOME. Touches no real lead, session or setting.
 set -uo pipefail
 here=$(dirname "$(readlink -f "$0")")
 T=$(mktemp -d)
-export LEADS_SOCKET=leadtest$$ HOME=$T/home MONSTER_DEV=$T/dev SHELL=/bin/bash
+export LEADS_SOCKET=leadtest$$ HOME=$T/home WORKSTATION_DEV=$T/dev SHELL=/bin/bash
 trap 'tmux -L "$LEADS_SOCKET" kill-server 2>/dev/null; rm -rf "$T"' EXIT
-export LEADS_CMD=$T/bin/claude MONSTER_CLAUDE=$T/bin/claude LEADS_ENV=$T/lead-env LEADS_VERIFY_S=1 LEADS_PROMPT_S=4
+export LEADS_CMD=$T/bin/claude WORKSTATION_CLAUDE=$T/bin/claude LEADS_ENV=$T/lead-env LEADS_VERIFY_S=1 LEADS_PROMPT_S=4
 export FAKE_LOG=$T/fake.log FAKE_CRASH=$T/crash FAKE_NOHANDOFF=$T/nohandoff FAKE_AGENTS=$T/agents.json FAKE_HOOK=$here/claude-notify.sh
 export GIT_AUTHOR_NAME=t GIT_AUTHOR_EMAIL=t@t GIT_COMMITTER_NAME=t GIT_COMMITTER_EMAIL=t@t
-mkdir -p "$T/bin" "$T/stub" "$HOME/.config/monday" "$HOME/bin" "$MONSTER_DEV"
+mkdir -p "$T/bin" "$T/stub" "$HOME/.config/monday" "$HOME/bin" "$WORKSTATION_DEV"
 cp "$here/lead-tmux.conf" "$HOME/.config/monday/"; cp "$here/monday-leads" "$HOME/bin/"
 echo 'export LEAD_ENV_SOURCED=yes' > "$LEADS_ENV"
 # no sound, and logger writes to a file instead of the journal
 for s in pw-play paplay afplay; do printf '#!/bin/sh\n' > "$T/stub/$s"; done
-# sudo never reaches the real one: monster-ctl off/reboot/sleep must not power anything off here
+# sudo never reaches the real one: workstation-ctl off/reboot/sleep must not power anything off here
 printf '#!/bin/sh\necho "sudo $*" >> %s/sudo.log\n' "$T" > "$T/stub/sudo"
 printf '#!/bin/sh\necho "$*" >> %s/logger.log\n' "$T" > "$T/stub/logger"
 chmod +x "$T/stub/"*; export PATH=$T/stub:$PATH
@@ -64,7 +64,7 @@ hook() { # hook <lead> <json>: run the hook in the lead's claude (HOOK) or a nes
   t send-keys -t "=leads:=$2" "$1 $f" Enter; sleep 1.5
 }
 
-mkrepo "$MONSTER_DEV/pa"; mkrepo "$MONSTER_DEV/pb"; mkrepo "$MONSTER_DEV/pc"
+mkrepo "$WORKSTATION_DEV/pa"; mkrepo "$WORKSTATION_DEV/pb"; mkrepo "$WORKSTATION_DEV/pc"
 L add a pa $sid1 >/dev/null; L add b pb $sid2 >/dev/null; L add c pc >/dev/null
 L set a order=2 >/dev/null; L set b order=1 'claude_name=last web lead' >/dev/null
 is "set rejects bad order" "$(L set a order=x)" "order: integer"
@@ -121,17 +121,17 @@ is "claude_name in status" "$(jq -r '.[0].lead.claude_name' <<<"$js")" "last web
 
 echo "== check / park"
 is "check clean" "$(L check a)" "a: clean"
-touch "$MONSTER_DEV/pa/dirty"; has "check: uncommitted" "$(L check a)" "1 uncommitted change"
-git -C "$MONSTER_DEV/pa" worktree add -q "$T/wt" -b wt 2>/dev/null; L set a worktree="$T/wt" >/dev/null
-echo "locked by pid 4999999" > "$MONSTER_DEV/pa/.git/worktrees/wt/locked"
-touch -d '5 minutes ago' "$MONSTER_DEV/pa/.git/index.lock"; touch "$MONSTER_DEV/pa/.git/MERGE_HEAD"
+touch "$WORKSTATION_DEV/pa/dirty"; has "check: uncommitted" "$(L check a)" "1 uncommitted change"
+git -C "$WORKSTATION_DEV/pa" worktree add -q "$T/wt" -b wt 2>/dev/null; L set a worktree="$T/wt" >/dev/null
+echo "locked by pid 4999999" > "$WORKSTATION_DEV/pa/.git/worktrees/wt/locked"
+touch -d '5 minutes ago' "$WORKSTATION_DEV/pa/.git/index.lock"; touch "$WORKSTATION_DEV/pa/.git/MERGE_HEAD"
 out=$(L check a); has "check: stale index.lock" "$out" "stale"; has "check: merge" "$out" "merge in progress"
 has "check: dead worktree lock pid" "$out" "dead pid 4999999"
-if [ -e "$MONSTER_DEV/pa/.git/index.lock" ]; then ok "check removes nothing"; else bad "check removed index.lock"; fi
+if [ -e "$WORKSTATION_DEV/pa/.git/index.lock" ]; then ok "check removes nothing"; else bad "check removed index.lock"; fi
 has "park without handoff refused" "$(L park a)" "handoff not written"
-touch -d '3 hours ago' "$MONSTER_DEV/pa/HANDOFF.md"
+touch -d '3 hours ago' "$WORKSTATION_DEV/pa/HANDOFF.md"
 has "park with old handoff refused" "$(L park a HANDOFF.md --force)" "not written in the last 2 h"
-touch "$MONSTER_DEV/pa/HANDOFF.md"
+touch "$WORKSTATION_DEV/pa/HANDOFF.md"
 has "park refused on git state" "$(L park a HANDOFF.md)" "uncommitted change"
 is "still active after refusals" "$(jq -r .a.state "$HOME/.config/monday/leads.json")" active
 wid=$(t display -p -t =leads:=a '#{window_id}')
@@ -141,16 +141,16 @@ has "parked placeholder text" "$(t capture-pane -p -t =leads:=a -S -50)" "lead a
 has "up reports parked" "$(L up)" "a: parked since"
 
 echo "== unpark policy"
-mkdir -p "$HOME/.claude/projects/p"; touch -d '1 hour ago' "$MONSTER_DEV/pa/HANDOFF.md"
+mkdir -p "$HOME/.claude/projects/p"; touch -d '1 hour ago' "$WORKSTATION_DEV/pa/HANDOFF.md"
 touch "$HOME/.claude/projects/p/$sidn.jsonl"   # session newer than handoff, parked < 24 h: resume
 : > "$FAKE_LOG"; out=$(L unpark a); has "unpark resumes" "$out" "a: started"; has "resumed" "$out" "resumed $sidn"
 is "same window after unpark" "$(t display -p -t =leads:=a '#{window_id}')" "$wid"
-L park a HANDOFF.md --force >/dev/null 2>&1; touch "$MONSTER_DEV/pa/HANDOFF.md"   # recent park; handoff newer
+L park a HANDOFF.md --force >/dev/null 2>&1; touch "$WORKSTATION_DEV/pa/HANDOFF.md"   # recent park; handoff newer
 L set a master_writer=true >/dev/null
 : > "$FAKE_LOG"; out=$(L unpark a); has "handoff newer: fresh" "$out" "fresh from hand-off"
 has "fresh prompt" "$(cat "$FAKE_LOG")" "and continue; first report drift before editing."
 has "master_writer not claimed" "$out" "needs master_writer claim --force (owner approval)"
-L park a HANDOFF.md --force >/dev/null 2>&1; touch -d '2 hours ago' "$MONSTER_DEV/pa/HANDOFF.md"
+L park a HANDOFF.md --force >/dev/null 2>&1; touch -d '2 hours ago' "$WORKSTATION_DEV/pa/HANDOFF.md"
 reg=$HOME/.config/monday/leads.json; jq '.a.parked_at -= 90000' "$reg" > "$reg.t" && mv "$reg.t" "$reg"
 : > "$FAKE_LOG"; has "parked >= 24h: fresh" "$(L unpark a)" "fresh from hand-off"
 has "unpark of active refused" "$(L unpark a)" "a is not parked"
@@ -165,7 +165,7 @@ if [ -s "$ev.1" ] && [ ! -e "$ev" ]; then ok "renamed to .1"; else bad "rotation
 
 echo "== agent-kit project: identity, worktrees, mode, park protocol, limit, stopall"
 for x in a b c; do L park "$x" --force >/dev/null 2>&1; L rm "$x" >/dev/null; done   # free the window list
-kp=$MONSTER_DEV/kp; mkrepo "$kp"; mkdir -p "$kp/.agentkit/workers" "$kp/.agentkit/autopilot" "$kp/scripts"
+kp=$WORKSTATION_DEV/kp; mkrepo "$kp"; mkdir -p "$kp/.agentkit/workers" "$kp/.agentkit/autopilot" "$kp/scripts"
 printf '.agentkit/\n.claude/\n' > "$kp/.gitignore"
 printf 'print("Current mode: solo")\nprint("Owner: present")\n' > "$kp/scripts/working_mode.py"
 git -C "$kp" add -A && git -C "$kp" commit -qm kit
@@ -247,8 +247,8 @@ has "stopall second lead: Escape only" "$out" "kw: Escape"; sleep 1
 is "kit mode set once per project" "$(grep -c '/agentkit:mode present' "$FAKE_LOG")" 1
 has "stopall kills nothing" "$(L list)" "kw active kit yes"
 
-echo "== monster-ctl"
-C() { "$here/monster-ctl" "$@" 2>&1; }
+echo "== workstation-ctl"
+C() { "$here/workstation-ctl" "$@" 2>&1; }
 has "answer digit" "$(C answer kw 2)" sent
 has "answer rejects text" "$(C answer kw yes)" usage
 has "answer rejects two keys" "$(C answer kw 1 2)" usage
@@ -260,8 +260,8 @@ has "pasted text arrived" "$(cat "$FAKE_LOG")" "got: hello world"
 has "send --allow-bang" "$(printf '!ls' | C send kw --allow-bang)" sent
 has "read a lead" "$(C read kw 5)" "❯"
 has "no such target" "$(C read nope)" "no lead or session: nope"
-is "--ssh loop refused" "$(SSH_ORIGINAL_COMMAND=--ssh timeout 5 "$here/monster-ctl" --ssh 2>&1 | tr '\n' ' '; echo "${PIPESTATUS[0]}")" "bad command 2"
-has "--ssh runs the command" "$(SSH_ORIGINAL_COMMAND='lead list' "$here/monster-ctl" --ssh)" "kw active"
+is "--ssh loop refused" "$(SSH_ORIGINAL_COMMAND=--ssh timeout 5 "$here/workstation-ctl" --ssh 2>&1 | tr '\n' ' '; echo "${PIPESTATUS[0]}")" "bad command 2"
+has "--ssh runs the command" "$(SSH_ORIGINAL_COMMAND='lead list' "$here/workstation-ctl" --ssh)" "kw active"
 has "lead --json allowed" "$(C lead status --json)" '"name": "kw"'
 has "start helper session" "$(C start helper pc)" "started helper"
 has "start refuses leads" "$(C start leads pc)" "lead session"
@@ -272,16 +272,16 @@ logs=$(cat "$T/logger.log"); has "invocations logged" "$logs" "send kw"; hasnt "
 
 echo "== viewers (grouped sessions)"
 # a pty, as a terminal gives; stdin stays open (at EOF script would type ^D into the lead)
-script -qc "$here/mon km" /dev/null < <(sleep 20) >/dev/null 2>&1 & mp=$!; sleep 1.5
+script -qc "$here/lead-attach km" /dev/null < <(sleep 20) >/dev/null 2>&1 & mp=$!; sleep 1.5
 v=$(t ls -F '#S' | grep '^view-' | head -1)
-if [ -n "$v" ]; then ok "mon made a viewer session"; else bad "no viewer session"; fi
+if [ -n "$v" ]; then ok "lead-attach made a viewer session"; else bad "no viewer session"; fi
 is "viewer grouped with leads, on its own window" "$(t display -p -t "=$v:" '#{session_group} #W')" "leads km"
 is "viewer goes away on detach" "$(t show-options -v -t "$v" destroy-unattached)" on
 t select-window -t "=leads:=kw"
 is "leads keeps its own window" "$(t display -p -t '=leads:' '#W')" "kw"
 hook HOOK km "{\"hook_event_name\":\"UserPromptSubmit\",\"session_id\":\"$sidm\",\"cwd\":\"$kp\"}"
 is "hook with a viewer present: still the lead" "$(tail -1 "$HOME/.local/state/monday/events.jsonl" | jq -r .lead)" km
-hasnt "ls hides viewers" "$("$here/monster-ctl" ls)" "view-"
+hasnt "ls hides viewers" "$("$here/workstation-ctl" ls)" "view-"
 kill "$mp" 2>/dev/null; wait "$mp" 2>/dev/null; sleep 0.5
 is "viewer leaves the lead running" "$(t display -p -t =leads:=km '#{pane_dead}')" 0
 is "viewer gone after its client" "$(t ls -F '#S' | grep -c '^view-')" 0
@@ -310,14 +310,31 @@ echo $$ > "$kp/.agentkit/workers/w-new.live"
 has "power: live worker pid" "$(L power-check)" "worker w-new"
 hook HOOK km "{\"hook_event_name\":\"Stop\",\"session_id\":\"$sidm\",\"cwd\":\"$kp\"}"
 has "hook: stop while a kit worker runs is not a wait (bg)" "$(tail -n 1 "$HOME/.local/state/monday/events.jsonl")" '"bg":true'
-out=$("$here/monster-ctl" off 2>&1; echo "exit $?"); has "off refused" "$out" "refused: off would cut"; has "off refused exit 1" "$out" "exit 1"
-has "sleep refused" "$("$here/monster-ctl" sleep 2>&1)" "refused: sleep"
+out=$("$here/workstation-ctl" off 2>&1; echo "exit $?"); has "off refused" "$out" "refused: off would cut"; has "off refused exit 1" "$out" "exit 1"
+has "sleep refused" "$("$here/workstation-ctl" sleep 2>&1)" "refused: sleep"
 if [ ! -e "$T/sudo.log" ]; then ok "nothing powered"; else bad "sudo was called: $(cat "$T/sudo.log")"; fi
-"$here/monster-ctl" sleep --force >/dev/null 2>&1; "$here/monster-ctl" off --force >/dev/null 2>&1
+"$here/workstation-ctl" sleep --force >/dev/null 2>&1; "$here/workstation-ctl" off --force >/dev/null 2>&1
 is "--force powers (stub)" "$(tr '\n' ' ' < "$T/sudo.log")" "sudo -n /usr/bin/systemctl suspend sudo -n /usr/bin/systemctl poweroff "
 rm "$kp/.agentkit/workers/w-new.live" "$T/sudo.log"
 echo "[{\"kind\":\"interactive\",\"pid\":$$,\"status\":\"idle\",\"name\":\"me\",\"cwd\":\"/y\"}]" > "$FAKE_AGENTS"
-has "idle only: sleep allowed, idle listed" "$("$here/monster-ctl" sleep 2>&1)" "idle, will be resumable"
+has "idle only: sleep allowed, idle listed" "$("$here/workstation-ctl" sleep 2>&1)" "idle, will be resumable"
 is "idle only: sleep reached systemctl" "$(cat "$T/sudo.log")" "sudo -n /usr/bin/systemctl suspend"
+
+echo "== config file (workstation.env; pre-rename monster.env as fallback)"
+h2=$T/h2; mkdir -p "$h2/.config/monday" "$T/olddev/oldp" "$T/newdev/newp"
+cfg() { env -u WORKSTATION_DEV -u LEADS_SOCKET HOME="$h2" "$@" 2>&1; }
+ml() { cfg python3 -c 'import importlib.machinery as m, importlib.util as u, sys
+lo = m.SourceFileLoader("ml", sys.argv[1]); d = u.module_from_spec(u.spec_from_loader("ml", lo)); lo.exec_module(d)
+print(d.DEV, d.SOCK)' "$here/monday-leads"; }
+echo "MONSTER_DEV=$T/olddev" > "$h2/.config/monday/monster.env"
+is "ctl: old file, old key" "$(cfg "$here/workstation-ctl" projects)" oldp
+is "monday-leads: old file, old key, old socket" "$(ml)" "$T/olddev monster"
+has "lead-attach: old file, old socket" "$(cfg bash -x "$here/lead-attach" 2>&1)" "sock=monster"
+printf 'WORKSTATION_DEV=%s\nLEADS_SOCKET=leadsx\n' "$T/newdev" > "$h2/.config/monday/workstation.env"
+is "ctl: new file wins" "$(cfg "$here/workstation-ctl" projects)" newp
+is "monday-leads: new file wins" "$(ml)" "$T/newdev leadsx"
+has "lead-attach: socket from the new file" "$(cfg bash -x "$here/lead-attach" 2>&1)" "sock=leadsx"
+rm "$h2/.config/monday/monster.env"; sed -i '/^LEADS_SOCKET=/d' "$h2/.config/monday/workstation.env"
+is "monday-leads: default socket" "$(ml)" "$T/newdev leads"
 
 exit $fail

@@ -1,14 +1,14 @@
 #!/usr/bin/env bash
-# Set up Monster (Arch-based workstation, here CachyOS + Hyprland) so Monday can drive it over Tailscale.
-# Idempotent. Run as root on Monster, from this folder:  bash setup.sh <owner-user> <monday-ssh-pubkey-file>
+# Set up the workstation (Arch-based Linux, here CachyOS + Hyprland) so Monday can drive it over Tailscale.
+# Idempotent. Run as root on the workstation, from this folder:  bash setup.sh <owner-user> <monday-ssh-pubkey-file>
 #
 # Monday's key logs in as the owner, but only from the monday server's Tailscale IP and
-# only into monster-ctl (forced command): Claude Code sessions run as the owner, with the
-# owner's claude-swap accounts and git keys, in a tmux server the owner attaches to with `mon`.
+# only into workstation-ctl (forced command): Claude Code sessions run as the owner, with the
+# owner's claude-swap accounts and git keys, in a tmux server the owner attaches to with `lead-attach`.
 # Accepted risk: text Monday types into a session runs with the owner's rights. The owner's
 # sudo password stays the last lock; the owner is taken out of the docker group (= root).
 #
-# - monster-idle-off.timer: power off after 24 awake hours with no running claude, interactive login or
+# - workstation-idle-off.timer: power off after 24 awake hours with no running claude, interactive login or
 #   active desktop (see idle-off)
 # - sudo without password only for poweroff, reboot and suspend
 # - /usr/local/sbin/monday-grant <minutes>|off: the owner gives passwordless sudo for a
@@ -23,22 +23,32 @@ home_o=$(getent passwd "$owner" | cut -d: -f6)
 grep -q '^ssh-ed25519 ' "$pub" || { echo "$pub is not an ed25519 public key"; exit 1; }
 here=$(dirname "$(readlink -f "$0")")
 
-install -m 755 "$here/monster-ctl" "$here/mon" /usr/local/bin/
-install -m 755 "$here/idle-off" /usr/local/sbin/monster-idle-off
+install -m 755 "$here/workstation-ctl" "$here/lead-attach" /usr/local/bin/
+install -m 755 "$here/idle-off" /usr/local/sbin/workstation-idle-off
+# An install from before the rename (docs/migration.md): the old command names keep working as links
+# (monster-ctl is the forced command of keys added before), the old idle timer and sudoers file go.
+for pair in monster-ctl:workstation-ctl mon:lead-attach; do
+  o=/usr/local/bin/${pair%%:*}
+  if [ -e "$o" ] && [ ! -L "$o" ]; then ln -sfn "${pair#*:}" "$o"; fi
+done
+if [ -e /etc/systemd/system/monster-idle-off.timer ]; then
+  systemctl disable --now monster-idle-off.timer 2>/dev/null || true
+  rm -f /etc/systemd/system/monster-idle-off.timer /etc/systemd/system/monster-idle-off.service /usr/local/sbin/monster-idle-off
+fi
 # monday-leads, notify hook, lead tmux config; XDG_RUNTIME_DIR: runuser does not set it (systemctl --user)
 runuser -u "$owner" -- env XDG_RUNTIME_DIR="/run/user/$(id -u "$owner")" bash "$here/install-user.sh"
 
 # Safety net: power off after 24 idle hours, even if Monday forgets to.
-cat > /etc/systemd/system/monster-idle-off.service <<EOF
+cat > /etc/systemd/system/workstation-idle-off.service <<EOF
 [Unit]
-Description=Power Monster off when idle
+Description=Power the workstation off when idle
 [Service]
 Type=oneshot
-ExecStart=/usr/local/sbin/monster-idle-off $owner 1440
+ExecStart=/usr/local/sbin/workstation-idle-off $owner 1440
 EOF
-cat > /etc/systemd/system/monster-idle-off.timer <<'EOF'
+cat > /etc/systemd/system/workstation-idle-off.timer <<'EOF'
 [Unit]
-Description=Check every 5 min whether Monster is idle
+Description=Check every 5 min whether the workstation is idle
 [Timer]
 OnBootSec=10min
 OnUnitActiveSec=5min
@@ -46,20 +56,21 @@ OnUnitActiveSec=5min
 WantedBy=timers.target
 EOF
 systemctl daemon-reload
-systemctl enable --now monster-idle-off.timer
+systemctl enable --now workstation-idle-off.timer
 
 # Monday's key: forced command, no forwarding, no pty.
 ak="$home_o/.ssh/authorized_keys"
 key=$(cut -d' ' -f1,2 "$pub")
 touch "$ak"; grep -vF "$key" "$ak" > "$ak.tmp" || true
-printf 'from="%s",command="/usr/local/bin/monster-ctl --ssh",restrict %s monday@monday\n' "$SERVER_IP" "$key" >> "$ak.tmp"
+printf 'from="%s",command="/usr/local/bin/workstation-ctl --ssh",restrict %s monday@monday\n' "$SERVER_IP" "$key" >> "$ak.tmp"
 mv "$ak.tmp" "$ak"; chown "$owner:" "$ak"; chmod 600 "$ak"
 
 gpasswd -d "$owner" docker >/dev/null 2>&1 || true
 
 printf '%s ALL=(root) NOPASSWD: /usr/bin/systemctl poweroff, /usr/bin/systemctl reboot, /usr/bin/systemctl suspend\n' "$owner" \
-  > /etc/sudoers.d/80-monster
-chmod 440 /etc/sudoers.d/80-monster
+  > /etc/sudoers.d/80-workstation-power
+chmod 440 /etc/sudoers.d/80-workstation-power
+rm -f /etc/sudoers.d/80-monster   # the same rule under its pre-rename name
 
 cat > /usr/local/sbin/monday-grant <<EOF
 #!/bin/bash
@@ -96,4 +107,4 @@ systemctl daemon-reload
 systemctl enable monday-grant-reset.service
 visudo -c >/dev/null
 
-echo "MONSTER-SETUP-OK"
+echo "WORKSTATION-SETUP-OK"

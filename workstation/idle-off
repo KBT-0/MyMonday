@@ -1,23 +1,30 @@
 #!/bin/bash
-# idle-off <owner> [minutes]: power Monster off when nothing has used it for <minutes> (default 1440 = 24 h).
-# Busy = a lead or helper session whose pane runs a live claude (tmux -L monster; dead panes, viewers and
+# idle-off <owner> [minutes]: power the workstation off when nothing has used it for <minutes> (default 1440 = 24 h).
+# Busy = a lead or helper session whose pane runs a live claude (lead tmux server; dead panes, viewers and
 # plain shells do not count), a running claude session/worker or held kit lock (monday-leads
 # power-check), an interactive SSH login (a pty) or a mosh session, or a graphical session (Wayland or
 # X11) of the owner that logind reports neither idle nor locked (IdleHint/LockedHint: set by the
-# desktop's idle daemon or screen locker; without one, a logged-in desktop always counts). Not busy: the server's per-minute `ssh monster lead events` poll (forced
+# desktop's idle daemon or screen locker; without one, a logged-in desktop always counts). Not busy: the server's per-minute `ssh workstation lead events` poll (forced
 # command, no pty), CCGram's own process, an empty tmux server.
-# Runs every 5 min from monster-idle-off.timer, as root.
+# Runs every 5 min from workstation-idle-off.timer, as root.
 set -euo pipefail
 PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
 owner=${1:?owner}; limit=$(( ${2:-1440} * 60 ))
-state=/run/monster-idle-off.last-busy   # /run is cleared on boot
+state=/run/workstation-idle-off.last-busy   # /run is cleared on boot
 # awake seconds only (CLOCK_MONOTONIC stops while suspended), so days of sleep never count as idle
 now=$(python3 -c "import time; print(int(time.monotonic()))")
 home=$(getent passwd "$owner" | cut -d: -f6)
+# the owner's lead tmux server: LEADS_SOCKET in workstation.env (default leads); an install not yet
+# migrated (only the pre-rename monster.env) keeps its old name
+sock=leads
+if [ -f "$home/.config/monday/workstation.env" ]; then
+  sock=$(sed -n 's/^LEADS_SOCKET=//p' "$home/.config/monday/workstation.env" | tail -n 1); sock=${sock//[^A-Za-z0-9_.-]/}
+elif [ -f "$home/.config/monday/monster.env" ]; then sock=monster; fi
+sock=${sock:-leads}
 
 busy=no
 # lead windows and helper sessions with claude in the foreground (same test as monday-leads)
-if runuser -u "$owner" -- tmux -L monster list-panes -a -F '#{session_name} #{pane_dead} #{pane_current_command}' 2>/dev/null \
+if runuser -u "$owner" -- tmux -L "$sock" list-panes -a -F '#{session_name} #{pane_dead} #{pane_current_command}' 2>/dev/null \
     | awk '$1 !~ /^view-/ && $2 == 0 && $3 == "claude" {f=1} END {exit !f}'; then busy=yes; fi
 # interactive logins: sshd names a pty session user@pts/N (the forced-command key has no pty: user@notty)
 pgrep -f '^sshd(-session)?: [^ ]+@pts/' >/dev/null 2>&1 && busy=yes
@@ -36,6 +43,6 @@ done
 if [ "$busy" = yes ] || [ ! -f "$state" ]; then echo "$now" > "$state"; exit 0; fi
 idle=$(( now - $(cat "$state") ))
 if [ "$idle" -ge "$limit" ]; then
-  logger -t monster-idle-off "idle ${idle}s, powering off"
+  logger -t workstation-idle-off "idle ${idle}s, powering off"
   systemctl poweroff
 fi

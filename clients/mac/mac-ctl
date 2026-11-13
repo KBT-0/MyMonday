@@ -1,18 +1,20 @@
 #!/bin/zsh
 # mac-ctl: the only thing Monday's SSH key may run on this Mac (forced command, installed to ~/bin by
-# clients/mac/install.sh). Opens Monster's Claude leads in terminal windows (mosh + tmux view via `mon`)
+# clients/mac/install.sh). Opens the workstation's Claude leads in terminal windows (mosh + tmux view via `lead-attach`)
 # and saves/restores the owner's iTerm2 window layout for "mode 2".
 #   open [lead ...]   one window per given lead (default: first lead only)
 #   save              record iTerm2 windows: bounds, tabs, split panes, which lead each pane shows
 #   restore           reopen that layout (each pane reconnects to its lead)
 #   layout            print the saved layout
 #   idle              seconds since the owner last touched keyboard/mouse
-#   list              leads registered on Monster
+#   list              leads registered on the workstation
 #   check             what this Mac has (mosh, terminal app, reachability)
 export PATH="/opt/homebrew/bin:/usr/local/bin:$PATH"
-# MONSTER_HOST=<user>@<workstation tailnet IP> in ~/.config/monday-mac/mac.env (written by install.sh)
+# WORKSTATION_HOST=<user>@<workstation tailnet IP> in ~/.config/monday-mac/mac.env (written by install.sh)
 [ -r "$HOME/.config/monday-mac/mac.env" ] && . "$HOME/.config/monday-mac/mac.env"
-HOST="${MONSTER_HOST:?set MONSTER_HOST=user@ip in ~/.config/monday-mac/mac.env}"
+# (a mac.env from before the rename has MONSTER_HOST: read for one release)
+HOST="${WORKSTATION_HOST:-${MONSTER_HOST:-}}"
+[ -n "$HOST" ] || { echo "set WORKSTATION_HOST=user@ip in ~/.config/monday-mac/mac.env" >&2; exit 2; }
 LAYOUT="$HOME/.config/monday-mac/layout.tsv"
 set -- ${=SSH_ORIGINAL_COMMAND:-$*}
 verb="$1"; shift 2>/dev/null
@@ -21,9 +23,9 @@ leads() { ssh -o BatchMode=yes -o ConnectTimeout=8 "$HOST" '~/bin/monday-leads l
 valid() { [[ "$1" =~ ^[A-Za-z0-9][A-Za-z0-9_-]*$ ]]; }
 lead_cmd() {
   if command -v mosh >/dev/null; then
-    print -r -- "$(command -v mosh) --client=$(command -v mosh-client) $HOST -- mon $1"
+    print -r -- "$(command -v mosh) --client=$(command -v mosh-client) $HOST -- lead-attach $1"
   else
-    print -r -- "/usr/bin/ssh -t $HOST mon $1"
+    print -r -- "/usr/bin/ssh -t $HOST lead-attach $1"
   fi
 }
 
@@ -92,7 +94,7 @@ restore_layout() {
   ensure_fs_profile
   : > "$LAYOUT.err"
   local known=" $(leads | tr '\n' ' ') "
-  [ "$known" = "  " ] && { echo "Monster unreachable or no leads; not restoring"; return 1; }
+  [ "$known" = "  " ] && { echo "workstation unreachable or no leads; not restoring"; return 1; }
   # windows that exist before we start (the owner's own); anything else we did not create is
   # iTerm's automatic default window (opened when the app is launched/activated) and gets closed
   local before="" made=" "
@@ -139,7 +141,7 @@ restore_layout() {
 case "$verb" in
   open)
     names=("$@"); [ ${#names} -eq 0 ] && names=($(leads | head -1))
-    [ ${#names} -eq 0 ] && { echo "no leads (Monster unreachable or registry empty)"; exit 1; }
+    [ ${#names} -eq 0 ] && { echo "no leads (workstation unreachable or registry empty)"; exit 1; }
     for n in $names; do open_one "$n"; sleep 0.5; done ;;
   save) save_layout ;;
   restore) restore_layout ;;
@@ -150,7 +152,7 @@ case "$verb" in
   check)
     echo "mosh: $(command -v mosh || echo missing)"
     [ -d /Applications/iTerm.app ] && echo "terminal: iTerm" || echo "terminal: Terminal.app"
-    ssh -o BatchMode=yes -o ConnectTimeout=8 "$HOST" true 2>/dev/null && echo "monster: reachable" || echo "monster: NOT reachable"
+    ssh -o BatchMode=yes -o ConnectTimeout=8 "$HOST" true 2>/dev/null && echo "workstation: reachable" || echo "workstation: NOT reachable"
     [ -s "$LAYOUT" ] && echo "layout: $(wc -l < "$LAYOUT" | tr -d ' ') panes saved" || echo "layout: none"
     f="$HOME/Library/Application Support/iTerm2/DynamicProfiles/monday-lead-fullscreen.json"
     [ -s "$f" ] && echo "fs-profile: $(cat "$f")" || echo "fs-profile: missing"

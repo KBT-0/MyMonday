@@ -2,10 +2,10 @@
 
 A **lead** is a long-running Claude Code session responsible for one project (or one task in a
 worktree). Leads live on the workstation as windows of a single tmux session, `leads`, on a private
-tmux server (`tmux -L monster`). Everything else (the assistant, CCGram, the owner's devices) attaches
+tmux server (`tmux -L leads`). Everything else (the assistant, CCGram, the owner's devices) attaches
 to that one place.
 
-## Pieces (`monster/`)
+## Pieces (`workstation/`)
 
 | File | Role |
 |---|---|
@@ -14,7 +14,7 @@ to that one place.
 | `lead-env` | login-like environment for a lead started by systemd or SSH (PATH, node, ssh-agent socket, pinned Claude version, no auto-update) |
 | `lead-tmux.conf` | names stay fixed (`allow-rename off`), big history, mouse, OSC 52 clipboard |
 | `lead-claude` | the `claude` CCGram starts for a session opened from Telegram: projects root only, refuses permission-bypass flags, registers the folder as a lead |
-| `mon` | the owner's viewer: `mon NAME` opens a grouped `view-*` session (own window choice per device, gone on detach) |
+| `lead-attach` | the owner's viewer: `lead-attach NAME` opens a grouped `view-*` session (own window choice per device, gone on detach) |
 | `ccgram.service`, `ccgram-patches/` | CCGram user unit (one Telegram topic per lead window, button approvals) and a small local patch: one button per menu option, prompts ahead of the queue |
 | `monday-leads.service` | optional: `up` at boot |
 | `test-leads.sh` | tests against a fake claude on a private tmux socket and a throwaway HOME |
@@ -26,7 +26,7 @@ stateDiagram-v2
     [*] --> active: lead add
     active --> running: lead up (resume by id, or fresh from a hand-off)
     running --> waiting: question / permission (hook event → Telegram)
-    waiting --> running: answer (Telegram button, ssh monster answer, or the owner's terminal)
+    waiting --> running: answer (Telegram button, ssh workstation answer, or the owner's terminal)
     running --> parked: lead park (hand-off written, checks clean, claude ended)
     parked --> running: lead unpark / up
     running --> dead: crash (pane kept, last output readable)
@@ -71,7 +71,7 @@ File contract (all under `<project main checkout>/$LEADS_KIT_DIR/`; any kit that
 ## Notifications
 
 ```
-claude (lead window) ─hook→ events.jsonl ─ssh monster lead events OFFSET→ lead_watch.py (server cron, 1/min) ─→ Telegram
+claude (lead window) ─hook→ events.jsonl ─ssh workstation lead events OFFSET→ lead_watch.py (server cron, 1/min) ─→ Telegram
 ```
 
 - **Mode 1** (default, the owner works through Telegram): every question, permission, finished turn,

@@ -1,7 +1,7 @@
 # systemd user unit: start the project leads at boot (installed to ~/.config/systemd/user, not enabled).
 # Without a desktop login it needs lingering: sudo loginctl enable-linger <owner>
 [Unit]
-Description=Monday project leads (tmux -L monster, session leads)
+Description=Monday project leads (tmux -L leads, session leads)
 # a user manager has no network-online.target of its own: best effort ordering only
 After=network-online.target
 

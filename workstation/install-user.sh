@@ -1,35 +1,50 @@
 #!/usr/bin/env bash
-# install-user.sh: the user-space half of Monster (no root). Run as the owner, idempotent:
-#   bash monster/install-user.sh
+# install-user.sh: the user-space half of the workstation (no root). Run as the owner, idempotent:
+#   bash workstation/install-user.sh
 # monday-leads -> ~/bin, the Claude Code notify hook -> ~/.claude/notify.sh (an existing different copy is
 # kept as notify.sh.bak-<time>), lead tmux config and env, the monday-leads user unit (not enabled), and
 # the hook's entries in ~/.claude/settings.json (created when missing; other hooks untouched);
-# CCGram unless MONSTER_CCGRAM=no (pinned uv tool, its Claude hooks after a settings.json backup, the
+# CCGram unless WORKSTATION_CCGRAM=no (pinned uv tool, its Claude hooks after a settings.json backup, the
 # ccgram user unit, enabled once its config exists).
 set -euo pipefail
 here=$(dirname "$(readlink -f "$0")")
 # systemctl --user needs the user bus; runuser/sudo -u do not set this
 export XDG_RUNTIME_DIR=${XDG_RUNTIME_DIR:-/run/user/$(id -u)}
 # Personal values come from the repo's git-ignored local.env (see local.env.example) and are copied
-# to ~/.config/monday/monster.env, which monster-ctl, monday-leads, lead-claude, lead-env and the notify
-# hook read at run time. A key missing from local.env keeps its line in monster.env.
+# to ~/.config/monday/workstation.env, which workstation-ctl, monday-leads, lead-claude, lead-env,
+# lead-attach, idle-off and the notify hook read at run time. A key missing from local.env keeps its
+# line in workstation.env.
 # shellcheck disable=SC1091
 [ -f "$here/../local.env" ] && . "$here/../local.env"
-menv=$HOME/.config/monday/monster.env
+# an older local.env: the pre-rename key names are read for one release (docs/migration.md)
+WORKSTATION_PROJECTS=${WORKSTATION_PROJECTS:-${MONSTER_PROJECTS:-}}
+WORKSTATION_CCGRAM=${WORKSTATION_CCGRAM:-${MONSTER_CCGRAM:-}}
+menv=$HOME/.config/monday/workstation.env
 install -d -m 700 "$HOME/.config/monday"
+# an install from before the rename: its monster.env becomes workstation.env (keys renamed, the old file
+# is left for the scripts not yet replaced); the running leads keep their tmux server name
+old=$HOME/.config/monday/monster.env
+if [ ! -e "$menv" ] && [ -f "$old" ]; then
+  sed 's/^MONSTER_/WORKSTATION_/' "$old" > "$menv.tmp"
+  grep -q '^LEADS_SOCKET=' "$menv.tmp" || echo "LEADS_SOCKET=monster" >> "$menv.tmp"
+  chmod 600 "$menv.tmp"; mv "$menv.tmp" "$menv"
+  echo "migrated $old to $menv (LEADS_SOCKET kept; see docs/migration.md)"
+fi
 touch "$menv"; chmod 600 "$menv"
-setkv() {  # setkv KEY VALUE [empty-ok]: replace or append KEY=VALUE in monster.env (empty VALUE: leave it alone, unless empty-ok)
+setkv() {  # setkv KEY VALUE [empty-ok]: replace or append KEY=VALUE in workstation.env (empty VALUE: leave it alone, unless empty-ok)
   [ -n "$2" ] || [ -n "${3:-}" ] || return 0
   grep -v "^$1=" "$menv" > "$menv.tmp" || true
   printf '%s=%s\n' "$1" "$2" >> "$menv.tmp" && mv "$menv.tmp" "$menv"
 }
-setkv MONSTER_DEV "${MONSTER_PROJECTS:+$HOME/$MONSTER_PROJECTS}"
+setkv WORKSTATION_DEV "${WORKSTATION_PROJECTS:+$HOME/$WORKSTATION_PROJECTS}"
 setkv LEADS_KIT_DIR "${LEADS_KIT_DIR:-}"
 setkv LEADS_KIT_CMD "${LEADS_KIT_CMD:-}"
 setkv NOTIFY_LANG "${NOTIFY_LANG:-}"
+setkv LEADS_SOCKET "${LEADS_SOCKET:-}"
 # an empty pin in local.env removes an older one (no pin)
 [ -z "${LEAD_CLAUDE_VERSION+x}" ] || setkv LEAD_CLAUDE_VERSION "$LEAD_CLAUDE_VERSION" empty-ok
-dev=$(sed -n 's/^MONSTER_DEV=//p' "$menv"); dev=${dev:-$HOME/projects}
+dev=$(sed -n 's/^WORKSTATION_DEV=//p' "$menv"); dev=${dev:-$HOME/projects}
+sock=$(sed -n 's/^LEADS_SOCKET=//p' "$menv" | tail -n 1); sock=${sock//[^A-Za-z0-9_.-]/}; sock=${sock:-leads}
 install -D -m 755 "$here/monday-leads" "$HOME/bin/monday-leads"
 install -D -m 755 "$here/lead-claude" "$HOME/bin/lead-claude"
 n=$HOME/.claude/notify.sh
@@ -54,8 +69,8 @@ jq --arg c "$hook" '
     else .hooks[$e] += [(if $m == "" then {} else {matcher: $m} end) + {hooks: [{type: "command", command: $c}]}] end)' \
   "$s" > "$s.tmp" && jq empty "$s.tmp" && mv "$s.tmp" "$s"
 
-if [ "${MONSTER_CCGRAM:-yes}" = no ]; then
-  echo "ccgram: skipped (MONSTER_CCGRAM=no)"; echo "MONSTER-USER-OK"; exit 0
+if [ "${WORKSTATION_CCGRAM:-yes}" = no ]; then
+  echo "ccgram: skipped (WORKSTATION_CCGRAM=no)"; echo "WORKSTATION-USER-OK"; exit 0
 fi
 # CCGram (Telegram topic per lead window), pinned. Its config is ~/.config/monday/ccgram.env (mode 600,
 # TELEGRAM_BOT_TOKEN written by the owner); its hook reads TMUX_SESSION_NAME from ~/.ccgram/.env: a link to it.
@@ -63,7 +78,12 @@ ccgram_version=4.22.0
 [ "$("$HOME/.local/bin/ccgram" --version 2>/dev/null)" = "ccgram, version $ccgram_version" ] \
   || uv tool install --force "ccgram==$ccgram_version"
 # local patches (one button per menu option, prompts ahead of the delivery queue); fails on a new ccgram
-patched=$("$here/ccgram-patches/apply.sh")
+# (a copy carrying an older version of a patch matches neither way: reinstall it clean once)
+patched=$("$here/ccgram-patches/apply.sh") || {
+  echo "ccgram: patches do not apply to the installed copy, reinstalling ccgram $ccgram_version clean"
+  uv tool install --force --reinstall "ccgram==$ccgram_version"
+  patched=$("$here/ccgram-patches/apply.sh")
+}
 echo "$patched"
 # the non-secret settings, added when missing (lead windows never closed by a timer; Telegram launches only
 # claude, through lead-claude: projects root only, no skip-permissions, registered as a lead)
@@ -79,7 +99,10 @@ if [ -f "$env" ]; then
 fi
 install -d -m 700 "$HOME/.ccgram"
 ln -sfn "$HOME/.config/monday/ccgram.env" "$HOME/.ccgram/.env"
-install -D -m 644 "$here/ccgram.service" "$HOME/.config/systemd/user/ccgram.service"
+# the unit with this install's lead tmux server (LEADS_SOCKET)
+unit=$HOME/.config/systemd/user/ccgram.service
+sed "s|/tmux-%U/leads,|/tmux-%U/$sock,|; s|tmux -L leads |tmux -L $sock |g" "$here/ccgram.service" > "$unit.tmp"
+if cmp -s "$unit.tmp" "$unit"; then rm -f "$unit.tmp"; else install -d "${unit%/*}"; mv "$unit.tmp" "$unit"; chmod 644 "$unit"; patched+=" patched: unit"; fi   # restart below
 cp -p "$s" "$s.bak-ccgram" && "$HOME/.local/bin/ccgram" hook --install && jq empty "$s"
 systemctl --user daemon-reload 2>/dev/null || true
 if [ ! -f "$HOME/.config/monday/ccgram.env" ]; then
@@ -89,4 +112,4 @@ elif systemctl --user enable --now ccgram.service; then
 else
   echo "ccgram: could not reach the user's systemd (no session or linger?); run later: systemctl --user enable --now ccgram.service"
 fi
-echo "MONSTER-USER-OK"
+echo "WORKSTATION-USER-OK"

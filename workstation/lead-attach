@@ -1,0 +1,28 @@
+#!/usr/bin/env bash
+# lead-attach [name]: watch a lead (window of session "leads") or a helper session Monday runs on the
+# workstation (detach: Ctrl-b d). Without a name: list them. A lead opens in a viewer session view-*
+# grouped with "leads": every client (monitors, Mac, phone) picks its own window; the viewer goes away on
+# detach. Viewer sessions are ignored by workstation-ctl ls/status and by CCGram (it watches session
+# "leads" only).
+# The lead tmux server: LEADS_SOCKET (environment, else ~/.config/monday/workstation.env, default leads);
+# an install not yet migrated (only the pre-rename monster.env) keeps its old server name.
+if [ -z "${LEADS_SOCKET:-}" ]; then
+  if [ -f "$HOME/.config/monday/workstation.env" ]; then
+    LEADS_SOCKET=$(sed -n 's/^LEADS_SOCKET=//p' "$HOME/.config/monday/workstation.env" | tail -n 1)
+  elif [ -f "$HOME/.config/monday/monster.env" ]; then
+    LEADS_SOCKET=monster
+  fi
+fi
+sock=${LEADS_SOCKET:-leads}
+t() { tmux -L "$sock" -f "$HOME/.config/monday/lead-tmux.conf" "$@"; }
+if [ -z "${1:-}" ]; then
+  t ls 2>/dev/null | grep -v '^view-' || echo "no sessions"
+  t list-windows -t =leads -F 'lead #W' 2>/dev/null; exit 0
+fi
+[[ "$1" =~ ^[A-Za-z0-9_-]{1,32}$ ]] || { echo "bad name: $1" >&2; exit 2; }
+if t list-windows -t =leads -F '#W' 2>/dev/null | grep -qxF -- "$1"; then
+  # one command: the options apply once attached (destroy-unattached on a detached session kills it at once)
+  exec tmux -L "$sock" -f "$HOME/.config/monday/lead-tmux.conf" \
+    new-session -t leads -s "view-$$-$RANDOM" \; set-option destroy-unattached on \; select-window -t ":=$1"
+fi
+exec tmux -L "$sock" -f "$HOME/.config/monday/lead-tmux.conf" attach -t "=$1"

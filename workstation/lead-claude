@@ -1,16 +1,19 @@
 #!/usr/bin/env bash
 # lead-claude: the claude CCGram starts for a session opened from Telegram (CCGRAM_CLAUDE_COMMAND in
-# ~/.config/monday/ccgram.env; installed to ~/bin). Refuses a folder outside MONSTER_DEV (the projects root) and any
+# ~/.config/monday/ccgram.env; installed to ~/bin). Refuses a folder outside WORKSTATION_DEV (the projects root) and any
 # skip-permissions flag. A project without a lead becomes one: the window is renamed to the lead name
 # (folder name, -2, -3... when taken; the Telegram topic keeps its title) and registered with
 # `monday-leads add`, so Monday sees it; claude runs as `-n <lead>` like a lead started by monday-leads.
 # CCGram closes a window it created once its claude exits (park included): `monday-leads up NAME` opens a new one.
 set -uo pipefail
-# personal values (MONSTER_DEV, LEADS_KIT_*): ~/.config/monday/monster.env, written by
-# install-user.sh from the repo's local.env; variables already in the environment win
-while IFS='=' read -r k v; do [ -n "${!k+x}" ] || export "$k=$v"; done \
-  < <(grep -E '^[A-Z_][A-Z0-9_]*=' "$HOME/.config/monday/monster.env" 2>/dev/null)
-dev=$(readlink -f "${MONSTER_DEV:-$HOME/projects}")
+# personal values (WORKSTATION_DEV, LEADS_KIT_*, LEADS_SOCKET): ~/.config/monday/workstation.env, written
+# by install-user.sh from the repo's local.env; variables already in the environment win. An install not
+# yet migrated: its pre-rename file and key names (monster.env, MONSTER_*) are read for one release.
+wenv=$HOME/.config/monday/workstation.env
+[ -f "$wenv" ] || { wenv=$HOME/.config/monday/monster.env; [ ! -f "$wenv" ] || export LEADS_SOCKET="${LEADS_SOCKET:-monster}"; }
+while IFS='=' read -r k v; do k=${k/#MONSTER_/WORKSTATION_}; [ -n "${!k+x}" ] || export "$k=$v"; done \
+  < <(grep -E '^[A-Z_][A-Z0-9_]*=' "$wenv" 2>/dev/null)
+dev=$(readlink -f "${WORKSTATION_DEV:-$HOME/projects}")
 here=$(pwd -P)
 case "$here/" in "$dev"/?*/) ;; *) echo "lead-claude: refused, $here is not under $dev" >&2; exit 2 ;; esac
 for a in "$@"; do

@@ -22,26 +22,26 @@ jobs:
         run: |
           # Every file with a bash shebang, with or without a .sh extension.
           grep -rlE --exclude-dir=.git '^#!(/usr/bin/env bash|/bin/bash)' . | xargs shellcheck -S style
-          shellcheck -s bash -S style monster/lead-env
+          shellcheck -s bash -S style workstation/lead-env
       - name: Syntax checks (bash, sh, zsh, Python)
         run: |
           sudo apt-get update -qq && sudo apt-get install -y -qq zsh >/dev/null
           grep -rlE --exclude-dir=.git '^#!(/usr/bin/env bash|/bin/bash)' . | xargs -n1 bash -n
           grep -rlE --exclude-dir=.git '^#!/bin/sh' . | xargs -r -n1 sh -n
           grep -rlE --exclude-dir=.git '^#!/bin/zsh' . | xargs -r -n1 zsh -n
-          python3 -m py_compile monster/monday-leads monster/ccgram-patches/check.py server/ops/*.py clients/phone-waker/wol.py
+          python3 -m py_compile workstation/monday-leads workstation/ccgram-patches/check.py server/ops/*.py clients/phone-waker/wol.py
       - name: Validate JSON
         run: |
           find . -name '*.json' -not -path './.git/*' -print0 | xargs -0 -n1 jq empty
-      - name: Unit tests (lead_watch)
+      - name: Unit tests (server/ops)
         run: python3 -m unittest discover -s server/ops/tests -v
       - name: Workstation tests (fake claude, private tmux socket)
         run: |
           sudo apt-get update -qq && sudo apt-get install -y -qq tmux >/dev/null
-          bash monster/test-monday-root.sh
+          bash workstation/test-monday-root.sh
           # the viewer tests need a terminal-like pty (script(1)) and may fail on a runner: reported, not fatal
-          bash monster/test-leads.sh | tee /tmp/leads.log || true
-          grep -q '^ok   idle only: sleep reached systemctl' /tmp/leads.log
+          bash workstation/test-leads.sh | tee /tmp/leads.log || true
+          grep -q '^ok   monday-leads: default socket' /tmp/leads.log
           ! grep '^FAIL' /tmp/leads.log | grep -v viewer
       - name: Personal values (no-op without local.env / .private-strings)
         run: bash scripts/check-private.sh

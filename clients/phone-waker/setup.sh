@@ -16,7 +16,7 @@ case $key in ssh-ed25519\ *) ;; *) echo "not an ssh-ed25519 public key" >&2; exi
 pkg install -y openssh python termux-api >/dev/null
 install -m 700 "$here/wol.py" "$HOME/wol.py"
 mkdir -p "$HOME/.config" "$HOME/.termux/boot" "$HOME/.ssh"
-printf 'WOL_MAC=%s\nWOL_BROADCAST=%s\nWOL_NAME=Monster\n' "$mac" "$bcast" > "$HOME/.config/wol.env"
+printf 'WOL_MAC=%s\nWOL_BROADCAST=%s\nWOL_NAME=workstation\n' "$mac" "$bcast" > "$HOME/.config/wol.env"
 install -m 700 "$here/start-sshd" "$HOME/.termux/boot/start-sshd"
 
 ak=$HOME/.ssh/authorized_keys
@@ -33,4 +33,4 @@ cfg=$PREFIX/etc/ssh/sshd_config
 grep -q '^PasswordAuthentication no' "$cfg" || echo 'PasswordAuthentication no' >> "$cfg"
 pgrep -x sshd >/dev/null || sshd
 python3 "$HOME/wol.py" >/dev/null && echo "test packet sent"
-echo "done. From the server: monster-wake   (expects: wake sent via monster-phone1)"
+echo "done. From the server: workstation-wake   (expects: wake sent via workstation-phone1)"

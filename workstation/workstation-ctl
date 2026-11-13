@@ -1,20 +1,20 @@
 #!/usr/bin/env bash
-# monster-ctl: what Monday runs on Monster (forced command for Monday's SSH key).
-# Claude Code sessions live in the tmux server "monster", so the owner can attach with `mon`:
+# workstation-ctl: what Monday runs on the workstation (forced command for Monday's SSH key).
+# Claude Code sessions live in the tmux server "leads" (LEADS_SOCKET), so the owner can attach with `lead-attach`:
 # project leads are windows of the session "leads" (window = lead name), Monday's helper sessions
 # from `start` are sessions of their own. <name> below is a lead or a helper session.
 #
 #   status                  uptime, battery, load, sessions
-#   projects                folders in the owner's projects root (MONSTER_DEV)
-#   ls                      tmux sessions (viewer sessions view-* of mon/mac-leads are hidden)
+#   projects                folders in the owner's projects root (WORKSTATION_DEV)
+#   ls                      tmux sessions (viewer sessions view-* of lead-attach/mac-leads are hidden)
 #   start <name> [dir]      new helper session running claude (dir: project folder name or path)
 #   read <name> [lines]     last screen lines (default 60)
 #   send <name> [--allow-bang]  paste stdin (bracketed paste), then Enter; text starting with ! needs --allow-bang
 #   answer <name> <key>     exactly one key, no Enter: 1-9 y n Escape Enter Up Down Tab BTab
 #   key <name> <key...>     send tmux keys, e.g. Escape, C-c, Enter
 #   stop <name>             end a helper session; for a lead end claude, keep its window (use lead park)
-#   sleep [--force]         suspend Monster (sessions and open windows survive; WoL wakes it)
-#   off | reboot [--force]  power off / reboot Monster
+#   sleep [--force]         suspend the workstation (sessions and open windows survive; WoL wakes it)
+#   off | reboot [--force]  power off / reboot the workstation
 #                           off/reboot/sleep refuse while a claude session or worker works or waits on a
 #                           permission/question, or a kit lock is held (monday-leads power-check prints
 #                           what); idle sessions do not block (resumable); --force overrides
@@ -26,13 +26,16 @@
 #                           | power-check | events [OFFSET] | viewers | ccgram status|restart
 set -euo pipefail
 
-# personal values (MONSTER_DEV, LEADS_KIT_*): ~/.config/monday/monster.env, written by
-# install-user.sh from the repo's local.env; variables already in the environment win
-while IFS='=' read -r k v; do [ -n "${!k+x}" ] || export "$k=$v"; done \
-  < <(grep -E '^[A-Z_][A-Z0-9_]*=' "$HOME/.config/monday/monster.env" 2>/dev/null)
-DEV=${MONSTER_DEV:-$HOME/projects}
-CLAUDE=${MONSTER_CLAUDE:-$HOME/.local/bin/claude}
-t() { tmux -L "${LEADS_SOCKET:-monster}" -f "$HOME/.config/monday/lead-tmux.conf" "$@"; }
+# personal values (WORKSTATION_DEV, LEADS_KIT_*, LEADS_SOCKET): ~/.config/monday/workstation.env, written
+# by install-user.sh from the repo's local.env; variables already in the environment win. An install not
+# yet migrated: its pre-rename file and key names (monster.env, MONSTER_*) are read for one release.
+wenv=$HOME/.config/monday/workstation.env
+[ -f "$wenv" ] || { wenv=$HOME/.config/monday/monster.env; [ ! -f "$wenv" ] || export LEADS_SOCKET="${LEADS_SOCKET:-monster}"; }
+while IFS='=' read -r k v; do k=${k/#MONSTER_/WORKSTATION_}; [ -n "${!k+x}" ] || export "$k=$v"; done \
+  < <(grep -E '^[A-Z_][A-Z0-9_]*=' "$wenv" 2>/dev/null)
+DEV=${WORKSTATION_DEV:-$HOME/projects}
+CLAUDE=${WORKSTATION_CLAUDE:-$HOME/.local/bin/claude}
+t() { tmux -L "${LEADS_SOCKET:-leads}" -f "$HOME/.config/monday/lead-tmux.conf" "$@"; }
 name_ok() { [[ "$1" =~ ^[A-Za-z0-9_-]{1,32}$ ]] || { echo "bad session name: $1" >&2; exit 2; }; }
 ls_sessions() { t ls 2>/dev/null | grep -v '^view-' || echo "no sessions"; }
 # tmux target of <name>: the lead window leads:<name>, else the helper session <name>
@@ -58,7 +61,7 @@ power_ok() {
 }
 # journald: verb and names only, never the text sent
 log=$cmd; for w in "${@:1:2}"; do [[ "$w" =~ ^[A-Za-z0-9_-]{1,32}$ ]] && log+=" $w"; done
-logger -t monster-ctl -- "$log" 2>/dev/null || true
+logger -t workstation-ctl -- "$log" 2>/dev/null || true
 case "$cmd" in
   status)
     uptime -p
@@ -82,7 +85,7 @@ case "$cmd" in
     [ -d "$d" ] || { echo "no such folder: $d" >&2; exit 2; }
     t has-session -t "=$1" 2>/dev/null && { echo "session $1 already running"; exit 0; }
     # a normal login shell (PATH, fnm, cswap as in a terminal), then claude in it; the shell
-    # stays when claude exits, so the owner can keep working there with `mon`
+    # stays when claude exits, so the owner can keep working there with `lead-attach`
     t new-session -d -s "$1" -c "$d" -x 220 -y 50
     sleep 1; t send-keys -t "=$1:" -l -- "$CLAUDE"; t send-keys -t "=$1:" Enter
     echo "started $1 in $d" ;;
@@ -95,7 +98,7 @@ case "$cmd" in
     # a leading ! puts Claude Code into shell mode: the text would run as a command
     [[ "${text#"${text%%[![:space:]]*}"}" != '!'* ]] || [ "${2:-}" = --allow-bang ] \
       || { echo "refused: text starts with '!' (shell mode); add --allow-bang" >&2; exit 2; }
-    buf=monster-ctl-$$
+    buf=workstation-ctl-$$
     printf '%s' "$text" | t load-buffer -b "$buf" -
     t paste-buffer -p -d -b "$buf" -t "$tg"; sleep 0.3; t send-keys -t "$tg" Enter; echo sent ;;
   answer)
@@ -109,7 +112,7 @@ case "$cmd" in
     t send-keys -t "$tg" "$@"; echo sent ;;
   stop)
     tg=$(target "${1:?name}")
-    if [[ "$tg" = =leads:* ]]; then t respawn-pane -k -t "$tg" printf '%s\n' "stopped by monster-ctl; monday-leads up $1"
+    if [[ "$tg" = =leads:* ]]; then t respawn-pane -k -t "$tg" printf '%s\n' "stopped by workstation-ctl; monday-leads up $1"
     else t kill-session -t "=$1"; fi
     echo "stopped $1" ;;
   off) power_ok "$@"; t kill-server 2>/dev/null || true; sudo -n /usr/bin/systemctl poweroff ;;

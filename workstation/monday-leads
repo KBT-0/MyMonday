@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""monday-leads: Claude Code project leads, one window each in tmux session `leads` of `tmux -L monster`
+"""monday-leads: Claude Code project leads, one window each in tmux session `leads` of `tmux -L leads`
 (window name = lead name; CCGram binds one Telegram topic per window of that one session).
 Monday carries transport, power, wake and tmux only. In an agent-kit project (DIR/$LEADS_KIT_DIR, default .agentkit) the kit's
 files are the truth: master-writer (session id, SendMessage name), handoff-pending (HANDOFF_PATH COMMIT),
@@ -10,7 +10,7 @@ watchdog would).
   list                         name state mode(kit|manual|autopilot) running(yes|no|dead) last-state age
   status --json                per lead: {schema:1, project, lead:{name, claude_name, session_id, alive, state, since,
                                context_tokens}, mode, owner, handoff, limit, workers, autopilot_report}
-  add NAME DIR [SESSION_ID]    register a lead (DIR: the main checkout; path or folder in MONSTER_DEV)
+  add NAME DIR [SESSION_ID]    register a lead (DIR: the main checkout; path or folder in WORKSTATION_DEV)
   rm NAME                      forget a lead (its window is left alone)
   set NAME key=value...        keys: dir session_id handoff claude_name order(int) master_writer(true|false)
                                worktree (run dir; relative: inside DIR) mode(manual|autopilot, non-kit only)
@@ -50,8 +50,8 @@ with this claude_name, else the registry). Non-kit: no session_id, parked >= 24 
 than the session transcript -> fresh; else resume. Claude runs as `-n claude_name` (default: the lead
 name), the name other leads address with SendMessage. Usage limits: no limit_watchdog; Monday reads
 `limit` in status and runs `up NAME` after RESETS_AT; that start deletes limit-stop as the watchdog would.
-Env (also read from ~/.config/monday/monster.env): MONSTER_DEV (projects root, default ~/projects),
-LEADS_KIT_DIR (default .agentkit), LEADS_KIT_CMD (default /agentkit), LEADS_CMD (claude binary, tests use a fake), LEADS_SOCKET (default monster), LEADS_ENV (default
+Env (also read from ~/.config/monday/workstation.env): WORKSTATION_DEV (projects root, default ~/projects),
+LEADS_KIT_DIR (default .agentkit), LEADS_KIT_CMD (default /agentkit), LEADS_CMD (claude binary, tests use a fake), LEADS_SOCKET (default leads), LEADS_ENV (default
 ~/.config/monday/lead-env), LEADS_VERIFY_S (8), LEADS_PROMPT_S (60), LEADS_PARK_WAIT_S (1200).
 """
 import fcntl, glob, json, os, re, subprocess, sys, time
@@ -60,27 +60,34 @@ HOME = os.path.expanduser("~")
 
 
 def _site_env(path):
-    """KEY=VALUE lines of ~/.config/monday/monster.env (personal values, written by install-user.sh);
-    the process environment wins, so tests and one-off calls can override them."""
+    """KEY=VALUE lines of ~/.config/monday/workstation.env (personal values, written by install-user.sh);
+    the process environment wins, so tests and one-off calls can override them. An install not yet
+    migrated: its pre-rename file (monster.env, keys MONSTER_*) is read for one release, and its lead
+    tmux server keeps the old name."""
+    legacy = os.path.join(os.path.dirname(path), "monster.env")
+    if not os.path.isfile(path) and os.path.isfile(legacy):
+        path = legacy
+        os.environ.setdefault("LEADS_SOCKET", "monster")
     try:
         for line in open(path):
             k, sep, v = line.strip().partition("=")
             if sep and re.fullmatch(r"[A-Z_][A-Z0-9_]*", k):
+                k = re.sub(r"^MONSTER_", "WORKSTATION_", k)
                 os.environ.setdefault(k, v.strip().strip('"').strip("'"))
     except OSError:
         pass
 
 
-_site_env(os.path.join(HOME, ".config/monday/monster.env"))
+_site_env(os.path.join(HOME, ".config/monday/workstation.env"))
 REG = os.path.join(HOME, ".config/monday/leads.json")
 STATE = os.path.join(HOME, ".local/state/monday")
 EVENTS = os.path.join(STATE, "events.jsonl")
 CONF = os.path.join(HOME, ".config/monday/lead-tmux.conf")
-DEV = os.environ.get("MONSTER_DEV", os.path.join(HOME, "projects"))
+DEV = os.environ.get("WORKSTATION_DEV", os.path.join(HOME, "projects"))
 # the agent kit: its per-project state folder and its slash-command namespace
 KIT_DIR = os.environ.get("LEADS_KIT_DIR", ".agentkit")
 KIT_CMD = os.environ.get("LEADS_KIT_CMD", "/agentkit")
-SOCK = os.environ.get("LEADS_SOCKET", "monster")
+SOCK = os.environ.get("LEADS_SOCKET", "leads")
 ENVF = os.environ.get("LEADS_ENV") or os.path.join(HOME, ".config/monday/lead-env")
 VERIFY_S = float(os.environ.get("LEADS_VERIFY_S", "8"))
 PROMPT_S = float(os.environ.get("LEADS_PROMPT_S", "60"))
@@ -184,7 +191,7 @@ def runs_claude(p):
 
 
 def paste(n, text):
-    """Type TEXT into the lead as a bracketed paste, then Enter (as monster-ctl send does)."""
+    """Type TEXT into the lead as a bracketed paste, then Enter (as workstation-ctl send does)."""
     b = f"monday-leads-{os.getpid()}"
     tmux("load-buffer", "-b", b, "-", inp=text)
     tmux("paste-buffer", "-p", "-d", "-b", b, "-t", win(n))

@@ -1,12 +1,12 @@
 #!/data/data/com.termux/files/usr/bin/python3
 """wol.py: send a Wake-on-LAN magic packet to the workstation. Runs on the waker phone in Termux as the
 forced command of the server's key (authorized_keys: command="python3 ~/wol.py",restrict ...), so the
-server's `monster-wake` connects without a command and greps the "wake sent" line.
+server's `workstation-wake` connects without a command and greps the "wake sent" line.
 
 Settings in ~/.config/wol.env (KEY=VALUE):
   WOL_MAC=aa:bb:cc:dd:ee:ff        the workstation's wired NIC (ip link / Settings)
   WOL_BROADCAST=192.168.1.255      LAN broadcast address (default 255.255.255.255)
-  WOL_NAME=Monster                 name used in the reply
+  WOL_NAME=workstation               name used in the reply
 Whatever command the client asked for (SSH_ORIGINAL_COMMAND) is ignored.
 Reference implementation of the waker interface; any tool that prints "wake sent" works.
 """
@@ -15,7 +15,7 @@ import re
 import socket
 import sys
 
-conf = {"WOL_BROADCAST": "255.255.255.255", "WOL_NAME": "Monster", "WOL_PORT": "9"}
+conf = {"WOL_BROADCAST": "255.255.255.255", "WOL_NAME": "workstation", "WOL_PORT": "9"}
 try:
     for line in open(os.path.expanduser("~/.config/wol.env")):
         k, sep, v = line.strip().partition("=")

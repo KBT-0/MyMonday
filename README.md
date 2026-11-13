@@ -20,7 +20,7 @@ Everything is reproducible from this repo; personal values live in one git-ignor
   Telegram topics, tmux + mosh for sessions that survive anything, Tailscale for the network, restic
   for backups. The glue is about 4k lines of bash and Python, tests included (see [Third-party components](#third-party-components)).
 - **The human stays in charge, by construction where possible.** Every remote key is a forced command
-  (`monster-ctl`, `mac-ctl`, `wol.py`); root on the workstation is two allow-listed verbs; power-off is
+  (`workstation-ctl`, `mac-ctl`, `wol.py`); root on the workstation is two allow-listed verbs; power-off is
   refused while work runs; the agent kit's state files are the truth (the assistant reads them and changes
   only a usage-limit stop it continues). Pushes and merges wait for the owner (an instruction, stated as
   such below). What the workstation key really amounts to is spelled out in the [Security model](#security-model).
@@ -43,18 +43,19 @@ Everything is reproducible from this repo; personal values live in one git-ignor
 
 ## Quickstart (server and workstation only)
 
-1. `cp local.env.example local.env`, fill in at least `OWNER_NAME`, `SERVER_IP`, `MONSTER_HOST`,
-   `MONSTER_USER`; `chmod 600 local.env`.
+1. `cp local.env.example local.env`, fill in at least `OWNER_NAME`, `SERVER_IP`, `WORKSTATION_HOST`,
+   `WORKSTATION_USER`; `chmod 600 local.env`.
 2. Server (Debian 13, as root): `bash server/bootstrap.sh <admin>` (base, user, tailscale, agent,
    userland, hermes, persona), then by hand `hermes model` and `hermes gateway setup` as the agent user,
-   then `bash server/bootstrap.sh <admin> routing service monster`. The full guide with hardening,
+   then `bash server/bootstrap.sh <admin> routing service workstation`. The full guide with hardening,
    memory, ops, backup and lockdown is [`server/README.md`](server/README.md).
-3. Workstation (Arch-based Linux, same checkout and `local.env`): `sudo bash monster/setup.sh <owner>
-   monday.pub` with the key the `monster` phase printed, then `sudo bash monster/install-root.sh <owner>`;
-   check with `bash monster/test-leads.sh`.
-4. From the server: `sudo -iu monday ssh monster status`, then talk to the assistant on Telegram.
+3. Workstation (Arch-based Linux, same checkout and `local.env`): `sudo bash workstation/setup.sh <owner>
+   monday.pub` with the key the `workstation` phase printed, then `sudo bash workstation/install-root.sh <owner>`;
+   check with `bash workstation/test-leads.sh`.
+4. From the server: `sudo -iu monday ssh workstation status`, then talk to the assistant on Telegram.
 
-Clients (Mac, phone, phone waker) and the ops jobs are optional: [docs/](docs/).
+Clients (Mac, phone, phone waker) and the ops jobs are optional: [docs/](docs/). Upgrading an install
+that still uses the old `monster` names: [docs/migration.md](docs/migration.md).
 
 ## Architecture
 
@@ -73,21 +74,21 @@ flowchart LR
 
     subgraph home["home LAN"]
         waker["phone waker<br/>Termux sshd → WoL"]
-        subgraph ws["workstation 'Monster' · runs as the owner"]
-            ctl["monster-ctl<br/>forced command"] --> leads["tmux -L monster · session leads<br/>one Claude Code lead per window"]
+        subgraph ws["workstation · runs as the owner"]
+            ctl["workstation-ctl<br/>forced command"] --> leads["tmux -L leads · session leads<br/>one Claude Code lead per window"]
             ccgram["CCGram"] --> leads
             leads -->|"notify hook"| ev["events.jsonl"]
         end
         waker -->|"magic packet"| ws
     end
 
-    opus -->|"ssh monster &lt;verb&gt;"| ctl
+    opus -->|"ssh workstation &lt;verb&gt;"| ctl
     lw -->|"lead events, lead list"| ctl
     lw -->|"pings (Bot API, direct)"| tg
-    opus -->|"monster-wake"| waker
+    opus -->|"workstation-wake"| waker
     opus -->|"ssh mac open | save | restore"| mac["Mac · mac-ctl<br/>iTerm2 + mosh (mode 2)"]
-    mac -->|"mosh, mon &lt;lead&gt;"| leads
-    phone["phone · Termius + mosh"] -->|"mon &lt;lead&gt;"| leads
+    mac -->|"mosh, lead-attach &lt;lead&gt;"| leads
+    phone["phone · Termius + mosh"] -->|"lead-attach &lt;lead&gt;"| leads
     internet((public internet)) -.->|"everything dropped<br/>except Tailscale UDP"| monday
 ```
 
@@ -123,12 +124,12 @@ Personal values come from `local.env` (`cp local.env.example local.env`).
 | `memory` | The memory vault (four git repos with a gitleaks hook, `SCHEMA.md`), Basic Memory as MCP, the vault skill, hourly auto-commit |
 | `service` | Gateway as a systemd user service that survives reboots |
 | `desktop` | Monday's visible Chromium on Xvfb, viewed over loopback-only x11vnc + noVNC (SSH tunnel); Hermes WebUI on the tailnet via `tailscale serve` |
-| `monster` | Keys and ssh aliases for the workstation, phone waker(s) and Mac; the `monster` skill; `monster-wake` |
+| `workstation` | Keys and ssh aliases for the workstation, phone waker(s) and Mac; the `workstation` skill; `workstation-wake` |
 | `ops` | Lead notifications, spend summary and nightly memory capture: cron block + Hermes cron jobs |
 | `backup` | Nightly encrypted restic backup to Cloudflare R2, as root |
 | `lockdown` | Operator sudo requires a password, with a 10-minute automatic revert as a safety net |
 
-The workstation side is `monster/setup.sh`, `install-root.sh` and `install-user.sh`; the clients have
+The workstation side is `workstation/setup.sh`, `install-root.sh` and `install-user.sh`; the clients have
 their own install scripts in `clients/`. The step-by-step rebuild guide is in
 [`server/README.md`](server/README.md).
 
@@ -139,7 +140,7 @@ configured by hand: every change went through the script, over SSH, and was re-r
 is idempotent. Nothing in it is architecture-specific.
 
 **One file of personal values.** Addresses, ids, user names and preferences live in a git-ignored
-`local.env`; the scripts read it (the workstation gets a copy in `~/.config/monday/monster.env`,
+`local.env`; the scripts read it (the workstation gets a copy in `~/.config/monday/workstation.env`,
 the ops jobs in `OPS_DIR`). The repo stays publishable, and a stranger fills in one file.
 
 **No lockout by construction.** The `harden` phase refuses to run unless Tailscale is up *and* the
@@ -160,11 +161,11 @@ the owner into the tools' own prompts or files (`~/.hermes/.env`, `~/.config/mon
 mode `600`). The automation checks file modes and key names, never contents.
 
 **Every remote key is a forced command; the workstation key is still effectively a shell as the
-owner.** The phone runs only `wol.py` and the Mac only `mac-ctl`. The workstation runs only `monster-ctl`,
-but `monster-ctl` types text and keys into Claude Code sessions that run as the owner, a helper session's
+owner.** The phone runs only `wol.py` and the Mac only `mac-ctl`. The workstation runs only `workstation-ctl`,
+but `workstation-ctl` types text and keys into Claude Code sessions that run as the owner, a helper session's
 login shell stays when claude exits, and `send --allow-bang` runs a shell command on purpose. So whoever
 holds the server's key can do anything the owner's account can, including adding keys. What stays out of
-its reach is what root owns: `monster-ctl` itself, `monday-root` and its allow lists, the sudoers rules
+its reach is what root owns: `workstation-ctl` itself, `monday-root` and its allow lists, the sudoers rules
 (sudo needs the owner's password).
 
 **The project's state is the truth.** Leads, hand-offs and kit files belong to the projects; the
@@ -204,7 +205,7 @@ subagents inherit the parent's tools.
   own files, `/srv/projects`, its API keys, and every key it holds (below). The Telegram allowlist
   limits who can talk to it, not what it reads. It cannot reach root or the operator's home.
 - **Workstation.** The assistant's key logs in only from the server's tailnet IP and only into
-  `monster-ctl`. But the Claude Code sessions there run **as the owner**, so text the assistant types
+  `workstation-ctl`. But the Claude Code sessions there run **as the owner**, so text the assistant types
   acts with the owner's rights: project files, git keys, project credentials. Treat the key as a shell as
   the owner: a compromised server can make a session read, change or push anything the owner's account
   can, run commands (`send --allow-bang`, a helper session's shell) and add SSH keys. Accepted: the owner uses
@@ -223,10 +224,10 @@ subagents inherit the parent's tools.
 | Rule | Kind | Enforced by |
 |---|---|---|
 | Assistant has no root on the server | control | separate account, no sudo, locked password |
-| Workstation key only from the server, only `monster-ctl` | control | `authorized_keys` `from=`, `command=`, `restrict` |
+| Workstation key only from the server, only `workstation-ctl` | control | `authorized_keys` `from=`, `command=`, `restrict` |
 | Workstation root limited to two verbs on listed names | control | sudoers regex + `monday-root` + root-owned allow lists |
 | Power off/reboot/sleep refused while work runs | control (bypassable) | `monday-leads power-check`; `--force` overrides |
-| Text starting with `!` is not sent to a session | control (bypassable) | `monster-ctl send`; `--allow-bang` overrides |
+| Text starting with `!` is not sent to a session | control (bypassable) | `workstation-ctl send`; `--allow-bang` overrides |
 | Telegram-started sessions: projects root, no permission bypass | control | `lead-claude` |
 | Backups unreadable and undeletable by the assistant | control | root-only restic credentials |
 | Phone and Mac keys do one thing | control | forced `wol.py` / `mac-ctl` |
@@ -244,7 +245,7 @@ subagents inherit the parent's tools.
 | [Hermes WebUI](https://github.com/nesquena/hermes-webui) | MIT | browser UI for the assistant on the tailnet (pinned commit) |
 | [Claude Code](https://docs.anthropic.com/en/docs/claude-code) | proprietary (Anthropic) | the project leads and helper sessions; the models behind Hermes |
 | [Basic Memory](https://github.com/basicmachines-co/basic-memory) | AGPL-3.0 | index + MCP server over the Markdown vault (used unmodified, as a separate tool) |
-| [CCGram](https://github.com/alexei-led/ccgram) | MIT | Telegram topic per lead window, button approvals (pinned, small local patch in `monster/ccgram-patches/`) |
+| [CCGram](https://github.com/alexei-led/ccgram) | MIT | Telegram topic per lead window, button approvals (pinned, small local patch in `workstation/ccgram-patches/`) |
 | [claude-swap](https://github.com/realiti4/claude-swap) | MIT | switching Claude Code accounts on the workstation (optional) |
 | [gitleaks](https://github.com/gitleaks/gitleaks) | MIT | pre-commit secret scan of the vault, nightly export scan, repo checks |
 | [restic](https://github.com/restic/restic) | BSD-2-Clause | encrypted, deduplicated nightly backups |
@@ -267,7 +268,7 @@ Each tool keeps its own license; this repo only contains configuration and glue,
 
 - [x] Run Hermes as a dedicated user without sudo
 - [x] Encrypted restic backups to Cloudflare R2, root-only, with a documented restore path
-- [x] Restricted SSH entry for the workstation (forced command, `monster/`)
+- [x] Restricted SSH entry for the workstation (forced command, `workstation/`)
 - [x] Wake-on-LAN relay at the workstation's home: an old Android phone (Termux sshd, forced command)
 - [x] Project leads in tmux with park/resume, notifications and CCGram topics
 - [x] Mac client with layout save/restore (work mode 2)
@@ -288,7 +289,7 @@ server/
     SOUL.md               Monday's identity and voice (template)
     model_map.json        delegation routes (light, advisor)
     skins/monday.yaml     CLI branding
-    skills/monster/       how Monday drives the workstation (+ references/)
+    skills/workstation/   how Monday drives the workstation (+ references/)
     skills/personal-memory-vault/  how Monday works with the vault (+ references/)
   ops/                    server jobs, installed to OPS_DIR by the ops phase
     lead_watch.py         lead events -> Telegram, work modes 1/2, reminders
@@ -296,7 +297,7 @@ server/
     brain_nightly.py      nightly session export to brain-raw (Hermes cron step 1)
     common.py messages.py config loader, Telegram, texts (en, tr)
     crontab.in            managed crontab block
-    tests/                unit tests of lead_watch.py (python3 -m unittest)
+    tests/                unit tests of lead_watch.py and common.py (python3 -m unittest)
     hermes-cron.sh        Hermes cron jobs (created once)
   memory/
     SCHEMA.md             vault contract template (first run only)
@@ -304,16 +305,16 @@ server/
     brain-autocommit*     hourly commit of the vault (user timer)
   hetzner/                provider firewall via hcloud (run from the operator's machine)
   backup/                 restic backup / restore wrapper + nightly timer (root only)
-  monster/monster-wake    asks a phone on the workstation's LAN to send Wake-on-LAN
+  workstation/workstation-wake  asks a phone on the workstation's LAN to send Wake-on-LAN
   desktop/*.service       Xvfb, x11vnc, noVNC, Chromium, Hermes WebUI (systemd user units)
-monster/                  the workstation side
+workstation/              the workstation side
   setup.sh                forced-command key, poweroff without password, idle-off, monday-grant
-  install-root.sh         monster-ctl, monday-root + sudoers rule (owner substituted)
-  install-user.sh         monday-leads, hook, tmux conf, lead env, CCGram, monster.env from local.env
-  monster-ctl             the forced command: status, sessions, leads, power, root
+  install-root.sh         workstation-ctl, monday-root + sudoers rule (owner substituted)
+  install-user.sh         monday-leads, hook, tmux conf, lead env, CCGram, workstation.env from local.env
+  workstation-ctl         the forced command: status, sessions, leads, power, root
   monday-leads            project leads registry and lifecycle (park/resume, events, power-check)
   claude-notify.sh        Claude Code hook: lead events + status files
-  lead-env, lead-tmux.conf, lead-claude, mon   lead environment, tmux config, Telegram-started claude, viewer
+  lead-env, lead-tmux.conf, lead-claude, lead-attach   lead environment, tmux config, Telegram-started claude, viewer
   ccgram.service, ccgram-patches/, monday-leads.service   user units, CCGram patch
   idle-off, monday-root, sudoers-81-monday-root
   test-leads.sh, test-monday-root.sh   tests (fake claude, private tmux socket, dry runs)
@@ -321,7 +322,7 @@ clients/
   mac/                    mac-ctl, install.sh, mac-leads.sh (tmux -CC)
   phone/                  Termius/mosh usage
   phone-waker/            Termux setup, wol.py, Termux:Boot script
-docs/                     remote-workstation, leads, clients, memory
+docs/                     remote-workstation, leads, clients, memory, migration
 .claude/skills/security-audit/   Cloudflare's security-audit skill (vendored, MIT)
 .github/workflows/shellcheck.yml lint, syntax checks, tests, gitleaks on every push
 ```

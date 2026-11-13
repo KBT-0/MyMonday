@@ -7,7 +7,7 @@ the phone; closing the app never stops a lead.
 
 1. Tailscale app on the phone, logged in to the tailnet.
 2. A terminal app with mosh support. Termius (iOS/Android) works: new host = the workstation's tailnet
-   IP (`MONSTER_HOST`), user = `MONSTER_USER`, *Use Mosh* on, a key you generated in the app.
+   IP (`WORKSTATION_HOST`), user = `WORKSTATION_USER`, *Use Mosh* on, a key you generated in the app.
    Blink Shell (iOS) or Termux (Android: `pkg install mosh openssh`) work too.
 3. Put the phone's PUBLIC key on the workstation (`~/.ssh/authorized_keys` of the owner, unrestricted:
    this is the owner's own access). Termius's "Export key to host" needs a working login first, so
@@ -21,8 +21,8 @@ the phone; closing the app never stops a lead.
 
 | Keys / command | Does |
 |---|---|
-| `mon` | list leads and helper sessions |
-| `mon <lead>` | attach to that lead in a private viewer session (your own window choice) |
+| `lead-attach` | list leads and helper sessions |
+| `lead-attach <lead>` | attach to that lead in a private viewer session (your own window choice) |
 | `Ctrl-b w` | pick another lead from the list |
 | `Ctrl-b n` / `Ctrl-b p` | next / previous lead |
 | `Ctrl-b d` | detach (the lead keeps running) |
