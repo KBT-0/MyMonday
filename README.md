@@ -57,8 +57,7 @@ It is mostly proven third-party tools, glued together by small scripts you can r
    check with `bash workstation/test-leads.sh`.
 4. From the server: `sudo -iu monday ssh workstation status`, then talk to the assistant on Telegram.
 
-Clients (Mac, phone, phone waker) and the ops jobs are optional: [docs/](docs/). Upgrading an install
-that still uses the old `monster` names: [docs/migration.md](docs/migration.md).
+Clients (Mac, phone, phone waker) and the ops jobs are optional: [docs/](docs/).
 
 ## Architecture
 
@@ -325,7 +324,7 @@ clients/
   mac/                    mac-ctl, install.sh, mac-leads.sh (tmux -CC)
   phone/                  Termius/mosh usage
   phone-waker/            Termux setup, wol.py, Termux:Boot script
-docs/                     remote-workstation, leads, clients, memory, migration
+docs/                     remote-workstation, leads, clients, memory
 .claude/skills/security-audit/   Cloudflare's security-audit skill (vendored, MIT)
 .github/workflows/shellcheck.yml lint, syntax checks, tests, gitleaks on every push
 ```

@@ -79,15 +79,6 @@ SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 LOCAL_ENV="$SCRIPT_DIR/../local.env"
 # shellcheck disable=SC1090  # personal values, not in git
 [ -f "$LOCAL_ENV" ] && . "$LOCAL_ENV"
-# Keys renamed MONSTER_* -> WORKSTATION_*: an older local.env is read for one release (docs/migration.md).
-# Its ssh alias was the old one, so that stays the default for such a file.
-legacy_env=""
-for k in HOST USER PROJECTS PHONE1 PHONE2 CCGRAM SSH_ALIAS; do
-  o="MONSTER_$k" n="WORKSTATION_$k"
-  if [ -z "${!n:-}" ] && [ -n "${!o:-}" ]; then printf -v "$n" '%s' "${!o}"; legacy_env=1; fi
-done
-unset k o n
-[ -z "$legacy_env" ] || [ -n "${WORKSTATION_SSH_ALIAS:-}" ] || WORKSTATION_SSH_ALIAS=monster
 SERVER_HOSTNAME="${SERVER_HOSTNAME:-monday}"
 SERVER_TIMEZONE="${SERVER_TIMEZONE:-UTC}"
 SWAP_SIZE="${SWAP_SIZE:-2G}"
@@ -592,21 +583,11 @@ phase_workstation() {
   # the owner's private rules in the live references/local.md, which is kept)
   # (its `ssh workstation <verb>` lines are written with the configured alias)
   install_skill workstation workstation "s/ssh workstation /ssh $alias /g"
-  [ ! -d "$(home_of "$AGENT_USER")/.hermes/skills/monster" ] || echo "note: the skill was renamed: move references/local.md of ~/.hermes/skills/monster to ~/.hermes/skills/workstation, then remove the old skill (docs/migration.md)"
   sed "s/^WAKERS_DEFAULT=.*/WAKERS_DEFAULT=\"$alias-phone1 $alias-phone2\"/" "$SCRIPT_DIR/workstation/workstation-wake" > /usr/local/bin/workstation-wake
   chmod 755 /usr/local/bin/workstation-wake
-  # an install from before the rename: the old command name keeps working (docs/migration.md)
-  if [ -e /usr/local/bin/monster-wake ] && [ ! -L /usr/local/bin/monster-wake ]; then
-    ln -sf workstation-wake /usr/local/bin/monster-wake
-  fi
   as_agent "HOST='$host' USER_M='$user' P1='$phone1' P2='$phone2' MAC='$mac' MACUSER='$macuser' A='$alias'"'
     set -euo pipefail
     install -d -m 700 ~/.ssh
-    # the key of an install from before the rename is kept (the workstation and phones already trust it)
-    if [ ! -f ~/.ssh/id_ed25519_workstation ] && [ -f ~/.ssh/id_ed25519_monster ]; then
-      cp -p ~/.ssh/id_ed25519_monster ~/.ssh/id_ed25519_workstation
-      cp -p ~/.ssh/id_ed25519_monster.pub ~/.ssh/id_ed25519_workstation.pub
-    fi
     [ -f ~/.ssh/id_ed25519_workstation ] || ssh-keygen -q -t ed25519 -N "" -C monday@monday -f ~/.ssh/id_ed25519_workstation
     # ~/.ssh/config: only the managed block is replaced; anything else in the file stays (block first,
     # so its values win: ssh keeps the first value it reads)
@@ -724,7 +705,6 @@ phase_backup() {
 for p in "${PHASES[@]}"; do
   case "$p" in
     base|user|tailscale|harden|agent|userland|hermes|persona|routing|memory|service|desktop|workstation|ops|backup|lockdown) "phase_$p" ;;
-    monster) log "phase monster is now called workstation"; phase_workstation ;;   # pre-rename name, one release
     *) die "unknown phase: $p" ;;
   esac
 done

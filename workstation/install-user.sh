@@ -16,20 +16,8 @@ export XDG_RUNTIME_DIR=${XDG_RUNTIME_DIR:-/run/user/$(id -u)}
 # line in workstation.env.
 # shellcheck disable=SC1091
 [ -f "$here/../local.env" ] && . "$here/../local.env"
-# an older local.env: the pre-rename key names are read for one release (docs/migration.md)
-WORKSTATION_PROJECTS=${WORKSTATION_PROJECTS:-${MONSTER_PROJECTS:-}}
-WORKSTATION_CCGRAM=${WORKSTATION_CCGRAM:-${MONSTER_CCGRAM:-}}
 menv=$HOME/.config/monday/workstation.env
 install -d -m 700 "$HOME/.config/monday"
-# an install from before the rename: its monster.env becomes workstation.env (keys renamed, the old file
-# is left for the scripts not yet replaced); the running leads keep their tmux server name
-old=$HOME/.config/monday/monster.env
-if [ ! -e "$menv" ] && [ -f "$old" ]; then
-  sed 's/^MONSTER_/WORKSTATION_/' "$old" > "$menv.tmp"
-  grep -q '^LEADS_SOCKET=' "$menv.tmp" || echo "LEADS_SOCKET=monster" >> "$menv.tmp"
-  chmod 600 "$menv.tmp"; mv "$menv.tmp" "$menv"
-  echo "migrated $old to $menv (LEADS_SOCKET kept; see docs/migration.md)"
-fi
 touch "$menv"; chmod 600 "$menv"
 setkv() {  # setkv KEY VALUE [empty-ok]: replace or append KEY=VALUE in workstation.env (empty VALUE: leave it alone, unless empty-ok)
   [ -n "$2" ] || [ -n "${3:-}" ] || return 0

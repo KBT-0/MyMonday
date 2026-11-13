@@ -22,8 +22,7 @@ export COLORTERM=${COLORTERM:-truecolor}
 # and it updates as usual. With a pin: no self-update inside a lead, and LEAD_CLAUDE, while that version
 # is still installed (the native installer keeps a few in ~/.local/share/claude/versions), is what
 # monday-leads starts (else ~/.local/bin/claude). Bump the pin after an update.
-# (an install not yet migrated has only the pre-rename monster.env)
-pin=$HOME/.config/monday/workstation.env; [ -f "$pin" ] || pin=$HOME/.config/monday/monster.env
+pin=$HOME/.config/monday/workstation.env
 pin=${LEAD_CLAUDE_VERSION:-$(sed -n 's/^LEAD_CLAUDE_VERSION=//p' "$pin" 2>/dev/null | tail -n 1)}
 pin=${pin//[^0-9A-Za-z._-]/}
 if [ -n "$pin" ]; then

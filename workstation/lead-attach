@@ -4,14 +4,9 @@
 # grouped with "leads": every client (monitors, Mac, phone) picks its own window; the viewer goes away on
 # detach. Viewer sessions are ignored by workstation-ctl ls/status and by CCGram (it watches session
 # "leads" only).
-# The lead tmux server: LEADS_SOCKET (environment, else ~/.config/monday/workstation.env, default leads);
-# an install not yet migrated (only the pre-rename monster.env) keeps its old server name.
-if [ -z "${LEADS_SOCKET:-}" ]; then
-  if [ -f "$HOME/.config/monday/workstation.env" ]; then
-    LEADS_SOCKET=$(sed -n 's/^LEADS_SOCKET=//p' "$HOME/.config/monday/workstation.env" | tail -n 1)
-  elif [ -f "$HOME/.config/monday/monster.env" ]; then
-    LEADS_SOCKET=monster
-  fi
+# The lead tmux server: LEADS_SOCKET (environment, else ~/.config/monday/workstation.env, default leads).
+if [ -z "${LEADS_SOCKET:-}" ] && [ -f "$HOME/.config/monday/workstation.env" ]; then
+  LEADS_SOCKET=$(sed -n 's/^LEADS_SOCKET=//p' "$HOME/.config/monday/workstation.env" | tail -n 1)
 fi
 sock=${LEADS_SOCKET:-leads}
 t() { tmux -L "$sock" -f "$HOME/.config/monday/lead-tmux.conf" "$@"; }

@@ -25,16 +25,6 @@ here=$(dirname "$(readlink -f "$0")")
 
 install -m 755 "$here/workstation-ctl" "$here/lead-attach" /usr/local/bin/
 install -m 755 "$here/idle-off" /usr/local/sbin/workstation-idle-off
-# An install from before the rename (docs/migration.md): the old command names keep working as links
-# (monster-ctl is the forced command of keys added before), the old idle timer and sudoers file go.
-for pair in monster-ctl:workstation-ctl mon:lead-attach; do
-  o=/usr/local/bin/${pair%%:*}
-  if [ -e "$o" ] && [ ! -L "$o" ]; then ln -sfn "${pair#*:}" "$o"; fi
-done
-if [ -e /etc/systemd/system/monster-idle-off.timer ]; then
-  systemctl disable --now monster-idle-off.timer 2>/dev/null || true
-  rm -f /etc/systemd/system/monster-idle-off.timer /etc/systemd/system/monster-idle-off.service /usr/local/sbin/monster-idle-off
-fi
 # monday-leads, notify hook, lead tmux config; XDG_RUNTIME_DIR: runuser does not set it (systemctl --user)
 runuser -u "$owner" -- env XDG_RUNTIME_DIR="/run/user/$(id -u "$owner")" bash "$here/install-user.sh"
 
@@ -70,7 +60,6 @@ gpasswd -d "$owner" docker >/dev/null 2>&1 || true
 printf '%s ALL=(root) NOPASSWD: /usr/bin/systemctl poweroff, /usr/bin/systemctl reboot, /usr/bin/systemctl suspend\n' "$owner" \
   > /etc/sudoers.d/80-workstation-power
 chmod 440 /etc/sudoers.d/80-workstation-power
-rm -f /etc/sudoers.d/80-monster   # the same rule under its pre-rename name
 
 cat > /usr/local/sbin/monday-grant <<EOF
 #!/bin/bash

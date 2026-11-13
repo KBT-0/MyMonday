@@ -10,11 +10,6 @@ id "$owner" >/dev/null || { echo "no such user: $owner"; exit 1; }
 
 install -o root -g root -m 755 "$here/monday-root" /usr/local/sbin/monday-root
 install -o root -g root -m 755 "$here/workstation-ctl" /usr/local/bin/workstation-ctl
-# an install from before the rename: the old name (in authorized_keys as the forced command) keeps
-# working as a link to the new one (docs/migration.md)
-if [ -e /usr/local/bin/monster-ctl ] && [ ! -L /usr/local/bin/monster-ctl ]; then
-  ln -sfn workstation-ctl /usr/local/bin/monster-ctl
-fi
 
 install -d -o root -g root -m 755 /etc/monday-root
 [ -e /etc/monday-root/packages.allow ] || install -o root -g root -m 644 /dev/null /etc/monday-root/packages.allow
@@ -29,5 +24,5 @@ mv "$f.tmp" "$f"
 visudo -c >/dev/null || { rm -f "$f"; echo "sudoers as a whole invalid, rule removed"; exit 1; }
 
 home_o=$(getent passwd "$owner" | cut -d: -f6)
-[ -f "$home_o/.config/monday/workstation.env" ] || [ -f "$home_o/.config/monday/monster.env" ] || echo "note: $home_o/.config/monday/workstation.env missing: run workstation/install-user.sh as $owner"
+[ -f "$home_o/.config/monday/workstation.env" ] || echo "note: $home_o/.config/monday/workstation.env missing: run workstation/install-user.sh as $owner"
 echo "MONDAY-ROOT-OK"

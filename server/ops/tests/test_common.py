@@ -1,5 +1,4 @@
-"""Unit tests of server/ops/common.py: config lookup with the pre-rename key names (MONSTER_*, read for
-one release when the WORKSTATION_* key is unset) and the workstation's ssh alias.
+"""Unit tests of server/ops/common.py: config lookup and the workstation's ssh alias.
 Run from the repo root:  python3 -m unittest discover -s server/ops/tests -v
 """
 import os, subprocess, sys, unittest
@@ -24,22 +23,14 @@ class Conf(unittest.TestCase):
     def test_new_key(self):
         self.assertEqual(self.conf({"WORKSTATION_HOST": "192.0.2.1"}, "WORKSTATION_HOST"), "192.0.2.1")
 
-    def test_legacy_key_is_fallback(self):
-        self.assertEqual(self.conf({"MONSTER_HOST": "192.0.2.9"}, "WORKSTATION_HOST"), "192.0.2.9")
-
-    def test_new_key_wins(self):
-        d = {"WORKSTATION_HOST": "192.0.2.1", "MONSTER_HOST": "192.0.2.9"}
-        self.assertEqual(self.conf(d, "WORKSTATION_HOST"), "192.0.2.1")
-
-    def test_empty_new_key_falls_back(self):
-        d = {"WORKSTATION_HOST": "", "MONSTER_HOST": "192.0.2.9"}
-        self.assertEqual(self.conf(d, "WORKSTATION_HOST"), "192.0.2.9")
+    def test_empty_key_is_default(self):
+        self.assertEqual(self.conf({"WORKSTATION_HOST": ""}, "WORKSTATION_HOST", "x"), "x")
 
     def test_default(self):
         self.assertEqual(self.conf({}, "WORKSTATION_HOST", "x"), "x")
 
-    def test_other_keys_untouched(self):
-        self.assertEqual(self.conf({"MONSTER_HOST": "192.0.2.9"}, "MAC_HOST"), "")
+    def test_unset_key(self):
+        self.assertEqual(self.conf({"WORKSTATION_HOST": "192.0.2.1"}, "MAC_HOST"), "")
 
 
 class Alias(unittest.TestCase):
@@ -52,9 +43,6 @@ class Alias(unittest.TestCase):
 
     def test_set(self):
         self.assertEqual(self.alias({"WORKSTATION_SSH_ALIAS": "ws", "WORKSTATION_HOST": "192.0.2.1"}), "ws")
-
-    def test_legacy_config_keeps_old_alias(self):
-        self.assertEqual(self.alias({"MONSTER_HOST": "192.0.2.9"}), "monster")
 
     def test_new_config_default(self):
         self.assertEqual(self.alias({"WORKSTATION_HOST": "192.0.2.1"}), "workstation")

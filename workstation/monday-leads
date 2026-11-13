@@ -61,18 +61,11 @@ HOME = os.path.expanduser("~")
 
 def _site_env(path):
     """KEY=VALUE lines of ~/.config/monday/workstation.env (personal values, written by install-user.sh);
-    the process environment wins, so tests and one-off calls can override them. An install not yet
-    migrated: its pre-rename file (monster.env, keys MONSTER_*) is read for one release, and its lead
-    tmux server keeps the old name."""
-    legacy = os.path.join(os.path.dirname(path), "monster.env")
-    if not os.path.isfile(path) and os.path.isfile(legacy):
-        path = legacy
-        os.environ.setdefault("LEADS_SOCKET", "monster")
+    the process environment wins, so tests and one-off calls can override them."""
     try:
         for line in open(path):
             k, sep, v = line.strip().partition("=")
             if sep and re.fullmatch(r"[A-Z_][A-Z0-9_]*", k):
-                k = re.sub(r"^MONSTER_", "WORKSTATION_", k)
                 os.environ.setdefault(k, v.strip().strip('"').strip("'"))
     except OSError:
         pass

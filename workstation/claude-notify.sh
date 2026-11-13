@@ -4,11 +4,9 @@
 # Claude Code writes the returned terminalSequence to the terminal itself (no /dev/tty needed).
 input=$(cat)
 # personal values (WORKSTATION_DEV, LEADS_KIT_*, LEADS_SOCKET): ~/.config/monday/workstation.env, written
-# by install-user.sh from the repo's local.env; variables already in the environment win. An install not
-# yet migrated: its pre-rename file and key names (monster.env, MONSTER_*) are read for one release.
+# by install-user.sh from the repo's local.env; variables already in the environment win.
 wenv=$HOME/.config/monday/workstation.env
-[ -f "$wenv" ] || { wenv=$HOME/.config/monday/monster.env; [ ! -f "$wenv" ] || export LEADS_SOCKET="${LEADS_SOCKET:-monster}"; }
-while IFS='=' read -r k v; do k=${k/#MONSTER_/WORKSTATION_}; [ -n "${!k+x}" ] || export "$k=$v"; done \
+while IFS='=' read -r k v; do [ -n "${!k+x}" ] || export "$k=$v"; done \
   < <(grep -E '^[A-Z_][A-Z0-9_]*=' "$wenv" 2>/dev/null)
 q() { jq -r "$1 // empty" <<<"$input"; }
 # popup texts: NOTIFY_LANG in workstation.env (from local.env): en (default) | tr

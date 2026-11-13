@@ -14,12 +14,11 @@ state=/run/workstation-idle-off.last-busy   # /run is cleared on boot
 # awake seconds only (CLOCK_MONOTONIC stops while suspended), so days of sleep never count as idle
 now=$(python3 -c "import time; print(int(time.monotonic()))")
 home=$(getent passwd "$owner" | cut -d: -f6)
-# the owner's lead tmux server: LEADS_SOCKET in workstation.env (default leads); an install not yet
-# migrated (only the pre-rename monster.env) keeps its old name
+# the owner's lead tmux server: LEADS_SOCKET in workstation.env (default leads)
 sock=leads
 if [ -f "$home/.config/monday/workstation.env" ]; then
   sock=$(sed -n 's/^LEADS_SOCKET=//p' "$home/.config/monday/workstation.env" | tail -n 1); sock=${sock//[^A-Za-z0-9_.-]/}
-elif [ -f "$home/.config/monday/monster.env" ]; then sock=monster; fi
+fi
 sock=${sock:-leads}
 
 busy=no

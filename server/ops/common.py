@@ -42,24 +42,14 @@ def _load():
 CONF = _load()
 
 
-# Keys renamed in this release (MONSTER_* -> WORKSTATION_*): an older local.env still works for one
-# release, its old name is read when the new one is unset (docs/migration.md).
-LEGACY_PREFIX = {"WORKSTATION_": "MONSTER_"}
-
-
 def conf(key, default=""):
     v = CONF.get(key, "")
-    for new, old in LEGACY_PREFIX.items():
-        if v == "" and key.startswith(new):
-            v = CONF.get(old + key[len(new):], "")
     return v if v != "" else default
 
 
 def workstation_alias():
-    """ssh alias of the workstation (WORKSTATION_SSH_ALIAS). Unset: "workstation", or the pre-rename
-    alias when the config still uses only the old key names (its ~/.ssh/config was written with it)."""
-    legacy = not any(k.startswith("WORKSTATION_") for k in CONF) and any(k.startswith("MONSTER_") for k in CONF)
-    return conf("WORKSTATION_SSH_ALIAS", "monster" if legacy else "workstation")
+    """ssh alias of the workstation (WORKSTATION_SSH_ALIAS, default "workstation")."""
+    return conf("WORKSTATION_SSH_ALIAS", "workstation")
 
 
 OPS_DIR = conf("OPS_DIR", HERE)

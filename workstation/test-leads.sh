@@ -320,21 +320,18 @@ echo "[{\"kind\":\"interactive\",\"pid\":$$,\"status\":\"idle\",\"name\":\"me\",
 has "idle only: sleep allowed, idle listed" "$("$here/workstation-ctl" sleep 2>&1)" "idle, will be resumable"
 is "idle only: sleep reached systemctl" "$(cat "$T/sudo.log")" "sudo -n /usr/bin/systemctl suspend"
 
-echo "== config file (workstation.env; pre-rename monster.env as fallback)"
-h2=$T/h2; mkdir -p "$h2/.config/monday" "$T/olddev/oldp" "$T/newdev/newp"
+echo "== config file (workstation.env)"
+h2=$T/h2; mkdir -p "$h2/.config/monday" "$T/newdev/newp"
 cfg() { env -u WORKSTATION_DEV -u LEADS_SOCKET HOME="$h2" "$@" 2>&1; }
 ml() { cfg python3 -c 'import importlib.machinery as m, importlib.util as u, sys
 lo = m.SourceFileLoader("ml", sys.argv[1]); d = u.module_from_spec(u.spec_from_loader("ml", lo)); lo.exec_module(d)
 print(d.DEV, d.SOCK)' "$here/monday-leads"; }
-echo "MONSTER_DEV=$T/olddev" > "$h2/.config/monday/monster.env"
-is "ctl: old file, old key" "$(cfg "$here/workstation-ctl" projects)" oldp
-is "monday-leads: old file, old key, old socket" "$(ml)" "$T/olddev monster"
-has "lead-attach: old file, old socket" "$(cfg bash -x "$here/lead-attach" 2>&1)" "sock=monster"
+is "monday-leads: no file, defaults" "$(ml)" "$h2/projects leads"
 printf 'WORKSTATION_DEV=%s\nLEADS_SOCKET=leadsx\n' "$T/newdev" > "$h2/.config/monday/workstation.env"
-is "ctl: new file wins" "$(cfg "$here/workstation-ctl" projects)" newp
-is "monday-leads: new file wins" "$(ml)" "$T/newdev leadsx"
-has "lead-attach: socket from the new file" "$(cfg bash -x "$here/lead-attach" 2>&1)" "sock=leadsx"
-rm "$h2/.config/monday/monster.env"; sed -i '/^LEADS_SOCKET=/d' "$h2/.config/monday/workstation.env"
+is "ctl: dev from the file" "$(cfg "$here/workstation-ctl" projects)" newp
+is "monday-leads: values from the file" "$(ml)" "$T/newdev leadsx"
+has "lead-attach: socket from the file" "$(cfg bash -x "$here/lead-attach" 2>&1)" "sock=leadsx"
+sed -i '/^LEADS_SOCKET=/d' "$h2/.config/monday/workstation.env"
 is "monday-leads: default socket" "$(ml)" "$T/newdev leads"
 
 exit $fail

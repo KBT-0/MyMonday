@@ -12,8 +12,7 @@
 export PATH="/opt/homebrew/bin:/usr/local/bin:$PATH"
 # WORKSTATION_HOST=<user>@<workstation tailnet IP> in ~/.config/monday-mac/mac.env (written by install.sh)
 [ -r "$HOME/.config/monday-mac/mac.env" ] && . "$HOME/.config/monday-mac/mac.env"
-# (a mac.env from before the rename has MONSTER_HOST: read for one release)
-HOST="${WORKSTATION_HOST:-${MONSTER_HOST:-}}"
+HOST="${WORKSTATION_HOST:-}"
 [ -n "$HOST" ] || { echo "set WORKSTATION_HOST=user@ip in ~/.config/monday-mac/mac.env" >&2; exit 2; }
 LAYOUT="$HOME/.config/monday-mac/layout.tsv"
 set -- ${=SSH_ORIGINAL_COMMAND:-$*}

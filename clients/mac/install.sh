@@ -12,7 +12,7 @@ here=${0:A:h}
 workstation="" key="" from=""
 while (( $# )); do
   case $1 in
-    --workstation|--monster) workstation=$2; shift 2 ;;   # --monster: its pre-rename name, one release
+    --workstation) workstation=$2; shift 2 ;;
     --key) key=$2; shift 2 ;;
     --from) from=$2; shift 2 ;;
     *) echo "unknown argument: $1" >&2; exit 2 ;;
