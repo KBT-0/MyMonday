@@ -106,3 +106,16 @@ claude (lead window) ─hook→ events.jsonl ─ssh workstation lead events OFFS
 - Grouped viewer sessions instead of attaching to `leads`: each device can look at a different lead
   without moving anyone else's view.
 - Dead panes are kept (`remain-on-exit`): a crashed lead stays readable and its Telegram topic survives.
+
+## Claude accounts (optional, claude-swap)
+
+With several Claude subscriptions managed by [claude-swap](https://github.com/realiti4/claude-swap)
+(`cswap`), `server/ops/account_watch.py` keeps the leads on an account with quota left. Every 2 minutes it
+reads `lead accounts` (`cswap list --json`) over the forced command. When the active account reaches
+`ACCOUNT_5H_MAX`/`ACCOUNT_7D_MAX` (or its login breaks), it switches to the first `ACCOUNTS_AUTO` account
+with quota and a working login (`lead account-switch N`), preferably at a turn boundary: while a lead is
+working it waits up to `ACCOUNT_WAIT_MIN`, unless the active account is at `ACCOUNT_HARD`. A switch moves
+every running claude on its next request, so it also costs the prompt cache of long contexts, which is why
+it waits for a boundary. `ACCOUNTS_ASK` accounts (company seats, shared plans) are never switched to by the
+job: the owner gets one message per episode listing them with their usage, and the assistant switches on
+his word. With nothing left anywhere, one message says the leads will stop at the limit.

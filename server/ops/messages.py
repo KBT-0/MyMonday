@@ -21,6 +21,11 @@ MESSAGES = {
         "waiting_now": "Waiting for you: {names}",
         "lead_crashed": "[{lead}] ⚪ claude is no longer running (no session-end event: crashed or killed)",
         "ssh_broken": "lead_watch: the workstation is online on the tailnet but ssh has failed for {mins} minutes. Needs a look.",
+        # account_watch
+        "acct_switched": "🔄 Claude account {old} → {new} (was 5h {o5:.0f}% / 7d {o7:.0f}%; new 5h {n5:.0f}% / 7d {n7:.0f}%). Running leads move on their next request.",
+        "acct_switch_failed": "⚠️ Claude account switch to {new} failed: {err}",
+        "acct_ask": "⚠️ Claude account {old} is nearly spent (5h {o5:.0f}% / 7d {o7:.0f}%) and no automatic account has quota left. Accounts that need your OK: {opts}. Say which one to use.",
+        "acct_stuck": "⛔ Claude account {old} is nearly spent (5h {o5:.0f}% / 7d {o7:.0f}%) and no other account has quota left: leads will stop at the limit.",
         # spend_summary
         "spend": "💸 Today ${today:.2f} · Month ${month:.2f}{left} · Cache hits {hit} (Hermes estimate{since})",
         "spend_left": " · Left ~${left:.2f}",
@@ -44,6 +49,11 @@ MESSAGES = {
         "waiting_now": "Seni bekleyenler: {names}",
         "lead_crashed": "[{lead}] ⚪ claude artık çalışmıyor (oturum kapanış olayı yok: çöktü ya da sonlandırıldı)",
         "ssh_broken": "lead_watch: iş istasyonu tailnet'te çevrimiçi ama ssh {mins} dakikadır başarısız. Kontrol gerekiyor.",
+        # account_watch
+        "acct_switched": "🔄 Claude hesabı {old} → {new} (eski 5h %{o5:.0f} / 7d %{o7:.0f}; yeni 5h %{n5:.0f} / 7d %{n7:.0f}). Çalışan lead'ler bir sonraki istekte yeni hesaba geçer.",
+        "acct_switch_failed": "⚠️ Claude hesabı {new}'e geçilemedi: {err}",
+        "acct_ask": "⚠️ Claude hesabı {old} dolmak üzere (5h %{o5:.0f} / 7d %{o7:.0f}) ve otomatik geçebileceğim hesapta kota kalmadı. Onayınla kullanılabilecekler: {opts}. Hangisine geçeyim?",
+        "acct_stuck": "⛔ Claude hesabı {old} dolmak üzere (5h %{o5:.0f} / 7d %{o7:.0f}) ve kotası olan başka hesap yok: lead'ler limitte duracak.",
         "spend": "💸 Bugün ${today:.2f} · Ay ${month:.2f}{left} · Cache isabet {hit} (Hermes tahmini{since})",
         "spend_left": " · Kalan ~${left:.2f}",
         "spend_since": ", {hhmm} sonrası",

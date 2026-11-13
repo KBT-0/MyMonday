@@ -39,6 +39,9 @@ watchdog would).
   viewers                      one line per tmux client of a view-* or leads session: SESSION ACTIVITY CREATED
                                TERMNAME IP (activity: epoch of its last key; IP: SSH_CONNECTION of the mosh-server
                                or sshd above the client, "-" when local or unknown)
+  accounts                     Claude accounts as JSON (`cswap list --json` of claude-swap, if installed)
+  account-switch N             switch every claude on this machine to claude-swap account N (`cswap switch N`;
+                               running sessions move on their next request). Policy lives on the server.
   events [OFFSET]              events.jsonl after byte OFFSET, then "OFFSET <n>". When the reader is caught up
                                (OFFSET == size) and the file is over 5 MB, it is renamed to events.jsonl.1 and
                                "OFFSET 0" is returned: a single reader never misses an event.
@@ -54,7 +57,7 @@ Env (also read from ~/.config/monday/workstation.env): WORKSTATION_DEV (projects
 LEADS_KIT_DIR (default .agentkit), LEADS_KIT_CMD (default /agentkit), LEADS_CMD (claude binary, tests use a fake), LEADS_SOCKET (default leads), LEADS_ENV (default
 ~/.config/monday/lead-env), LEADS_VERIFY_S (8), LEADS_PROMPT_S (60), LEADS_PARK_WAIT_S (1200).
 """
-import fcntl, glob, json, os, re, subprocess, sys, time
+import fcntl, glob, json, os, re, shutil, subprocess, sys, time
 
 HOME = os.path.expanduser("~")
 
@@ -842,6 +845,20 @@ def main(a):
             pid, sess, act, created, term = line.split("\t")
             if sess == SESS or sess.startswith("view-"):
                 print(sess, act, created, term or "-", remote_ip(int(pid)))
+    elif cmd == "accounts" and not a:
+        cswap = shutil.which("cswap") or os.path.join(HOME, ".local/bin/cswap")
+        if not os.path.exists(cswap):
+            die("claude-swap (cswap) is not installed")
+        r = subprocess.run([cswap, "list", "--json"], capture_output=True, text=True, timeout=60)
+        sys.stdout.write(r.stdout)
+        sys.exit(r.returncode)
+    elif cmd == "account-switch" and len(a) == 1 and re.fullmatch(r"[0-9]{1,2}", a[0]):
+        cswap = shutil.which("cswap") or os.path.join(HOME, ".local/bin/cswap")
+        if not os.path.exists(cswap):
+            die("claude-swap (cswap) is not installed")
+        r = subprocess.run([cswap, "switch", a[0]], capture_output=True, text=True, timeout=60)
+        print((r.stdout + r.stderr).strip())
+        sys.exit(r.returncode)
     elif cmd == "events" and len(a) <= 1:
         off = int(a[0]) if a and a[0].isdigit() else 0
         with lock(EVENTS):  # the hook appends under the same lock

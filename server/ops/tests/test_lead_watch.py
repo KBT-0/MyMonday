@@ -11,7 +11,7 @@ _tmp = tempfile.mkdtemp(prefix="lead_watch_test.")
 atexit.register(shutil.rmtree, _tmp, True)
 _env = os.path.join(_tmp, "local.env")
 with open(_env, "w") as _f:
-    _f.write("WORKSTATION_HOST=192.0.2.1\nMAC_HOST=192.0.2.2\nOPS_LANG=en\n")
+    _f.write('WORKSTATION_HOST=192.0.2.1\nMAC_HOST=192.0.2.2\nOPS_LANG=en\nACCOUNTS_AUTO="1 2"\nACCOUNTS_ASK="3 4"\n')
 os.environ.update(MONDAY_ENV=_env, OPS_STATE=os.path.join(_tmp, "state"), HERMES_ENV=os.path.join(_tmp, "none"))
 for k in ("WORKSTATION_HOST", "MAC_HOST", "OPS_LANG", "OPS_DIR"):
     os.environ.pop(k, None)

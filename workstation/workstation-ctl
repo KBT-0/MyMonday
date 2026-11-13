@@ -24,6 +24,7 @@
 #                           | rm NAME | set NAME k=v... | up [NAME] | unpark NAME|all | check NAME
 #                           | park NAME|all [HANDOFF] [--force] | mode NAME away|present | stopall
 #                           | power-check | events [OFFSET] | viewers | ccgram status|restart
+#                           | accounts | account-switch N (claude-swap)
 #   help                    this text and the extension verbs installed on this machine
 #   <verb> [args...]        extension: /etc/workstation-ctl.d/<verb> (verb ^[a-z][a-z0-9-]{0,30}$, not a
 #                           built-in), run only if the directory and the file are owned by root, not group-
@@ -161,8 +162,8 @@ case "$cmd" in
     sudo -n /usr/local/sbin/monday-root "$1" "$2" ;;
   lead)
     # exec without a shell; every word is checked, so no injection (names are checked again in monday-leads)
-    [[ "${1:-}" =~ ^(list|status|add|rm|set|up|unpark|check|park|mode|stopall|power-check|events|viewers|ccgram)$ ]] \
-      || { echo "usage: lead list|status|add|rm|set|up|unpark|check|park|mode|stopall|power-check|events|viewers|ccgram ..." >&2; exit 2; }
+    [[ "${1:-}" =~ ^(list|status|add|rm|set|up|unpark|check|park|mode|stopall|power-check|events|viewers|ccgram|accounts|account-switch)$ ]] \
+      || { echo "usage: lead list|status|add|rm|set|up|unpark|check|park|mode|stopall|power-check|events|viewers|ccgram|accounts|account-switch ..." >&2; exit 2; }
     for w in "$@"; do
       [[ "$w" =~ ^[A-Za-z0-9_][A-Za-z0-9_./=:+-]{0,200}$ || "$w" = --force || "$w" = --json ]] || { echo "bad argument: $w" >&2; exit 2; }
     done
