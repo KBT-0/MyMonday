@@ -105,7 +105,7 @@ class Run(unittest.TestCase):
 
 
 class Protect(unittest.TestCase):
-    """ACCOUNT_PROTECT: cap lower, and never switch back once reserved (Kemal's rule for account 1)."""
+    """ACCOUNT_PROTECT: cap lower, and never switch back once reserved (the owner's rule for his own account)."""
 
     def test_protected_account_capped_lower_and_reserved(self):
         old_protect, old_max = aw.PROTECT, aw.PROTECT_MAX
