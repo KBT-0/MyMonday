@@ -36,7 +36,10 @@ case "$RESTIC_REPOSITORY" in
 esac
 
 AGENT_HOME="$(getent passwd "${AGENT_USER:-monday}" | cut -d: -f6)"
-ADMIN_HOME="$(getent passwd "${ADMIN_USER:-kemal}" | cut -d: -f6)"
+# ADMIN_USER comes from the unit's drop-in (written by the backup phase); read it there for manual runs
+[ -n "${ADMIN_USER:-}" ] || ADMIN_USER=$(sed -n 's/.*ADMIN_USER=\([^ ]*\).*/\1/p' \
+  /etc/systemd/system/mymonday-backup.service.d/users.conf 2>/dev/null)
+ADMIN_HOME="$(getent passwd "${ADMIN_USER:?ADMIN_USER unknown: re-run bootstrap.sh <admin> backup}" | cut -d: -f6)"
 PROJECTS_DIR="${PROJECTS_DIR:-/srv/projects}"
 
 # What to keep. Installs and caches are rebuilt by bootstrap.sh, so they are left out.

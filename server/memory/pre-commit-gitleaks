@@ -1,0 +1,7 @@
+#!/bin/sh
+# gitleaks pre-commit hook of the memory vault repos (installed by `bootstrap.sh <admin> memory`):
+# blocks a commit that contains a secret. Fails closed: no gitleaks, no commit.
+GL="$HOME/.local/bin/gitleaks"
+[ -x "$GL" ] || GL="$(command -v gitleaks)"
+[ -n "$GL" ] || { echo "gitleaks not found; commit blocked" >&2; exit 1; }
+exec "$GL" git --pre-commit --staged --redact --no-banner -v

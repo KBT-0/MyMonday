@@ -3,20 +3,20 @@
 Always-on personal server that runs the Hermes Agent gateway ("Monday") on Telegram,
 plus light dev and deploy work. Heavy builds run elsewhere.
 
-Current host: Hetzner Cloud small ARM VPS (arm64, 2 vCPU, 4 GB RAM, 40 GB), Debian 13, EU.
+Reference host: a small arm64 cloud server (2 vCPU, 4 GB RAM, 40 GB disk), Debian 13.
 Nothing in `bootstrap.sh` is arm64-specific; it also runs on x86_64 Debian 13.
 
 ## Accounts
 
 | Account | Purpose | Privileges |
 |---|---|---|
-| `kemal` | Human operator. SSH over Tailscale. | sudo with password (password-less only until the `lockdown` phase). |
+| `admin` | Human operator (any name: the first argument of `bootstrap.sh`; `admin` in the examples below). SSH over Tailscale. | sudo with password (password-less only until the `lockdown` phase). |
 | `monday` | Runs Hermes (Monday). | No sudo, locked password, no SSH keys, home `700`. Reached with `sudo -iu monday`. |
 
 `/srv/projects` belongs to `monday` (group `projects`, setgid, default ACL `g:projects:rwx`).
-`kemal` is not in that group and works there only as `monday` (`sudo -u monday -H ...`): files
-there are agent-writable, so running git, npm, make or `claude` in them as `kemal` would let a
-prompt injection run code as the operator. Monday cannot read `/home/kemal` and cannot install
+`admin` is not in that group and works there only as `monday` (`sudo -u monday -H ...`): files
+there are agent-writable, so running git, npm, make or `claude` in them as `admin` would let a
+prompt injection run code as the operator. Monday cannot read `/home/admin` and cannot install
 packages; for root work it gives the operator the command.
 
 ## Files
@@ -28,6 +28,10 @@ packages; for root work it gives the operator the command.
 
 ## Rebuild from zero
 
+0. Personal values: `cp local.env.example local.env`, fill it in, `chmod 600 local.env`. It is
+   git-ignored and travels with the copied tree; every phase reads it (`OWNER_NAME`, timezone,
+   tailnet addresses of the workstation, phones and Mac, ...). Secrets never go there.
+
 1. Create a Debian 13 server with your Mac's SSH key for root. Note its public IP.
    Keep the provider's web console (Hetzner: Console in the server view) open as a fallback.
 
@@ -35,42 +39,42 @@ packages; for root work it gives the operator the command.
 
    ```sh
    IP=<public-ip>
-   tar czf - server | ssh root@$IP 'mkdir -p /root/MyMonday && tar xzf - -C /root/MyMonday'
-   ssh root@$IP 'bash /root/MyMonday/server/bootstrap.sh kemal base user'
-   ssh kemal@$IP true   # operator login works
+   tar czf - server local.env | ssh root@$IP 'mkdir -p /root/MyMonday && tar xzf - -C /root/MyMonday'
+   ssh root@$IP 'bash /root/MyMonday/server/bootstrap.sh admin base user'
+   ssh admin@$IP true   # operator login works
    ```
 
 3. Tailscale. The phase prints a login URL and waits until you approve it:
 
    ```sh
-   ssh root@$IP 'bash /root/MyMonday/server/bootstrap.sh kemal tailscale'
+   ssh root@$IP 'bash /root/MyMonday/server/bootstrap.sh admin tailscale'
    ```
 
    If the old node "monday" still exists in the tailnet, remove it in the admin console first,
    or the new one gets a suffixed name. Then from the Mac (Tailscale running):
 
    ```sh
-   ssh kemal@monday true
+   ssh admin@monday true
    ```
 
 4. Only after step 3 works, harden SSH and enable the firewall. Run it over Tailscale:
 
    ```sh
-   ssh kemal@monday 'sudo CONFIRMED_TAILSCALE_LOGIN=yes bash /root/MyMonday/server/bootstrap.sh kemal harden'
+   ssh admin@monday 'sudo CONFIRMED_TAILSCALE_LOGIN=yes bash /root/MyMonday/server/bootstrap.sh admin harden'
    nc -vz -w 5 $IP 22    # must fail (filtered)
-   ssh kemal@monday true # must still work
+   ssh admin@monday true # must still work
    ```
 
 5. Agent user, userland, Hermes and persona:
 
    ```sh
-   ssh kemal@monday 'sudo bash /root/MyMonday/server/bootstrap.sh kemal agent userland hermes persona'
+   ssh admin@monday 'sudo bash /root/MyMonday/server/bootstrap.sh admin agent userland hermes persona'
    ```
 
 6. Secrets, typed by hand in your own SSH session (never through scripts or chat):
 
    ```sh
-   ssh kemal@monday
+   ssh admin@monday
    sudo -iu monday
    hermes model           # provider Anthropic + API key(s)
    hermes gateway setup   # Telegram bot token, TELEGRAM_ALLOWED_USERS=<your Telegram user ID>
@@ -86,12 +90,12 @@ packages; for root work it gives the operator the command.
    - The wizard may install and start the gateway service itself. That is fine; the
      `service` phase skips the install when one exists (`--if-missing`).
 
-   Claude Code: run `claude` once as `kemal` (and as `monday` if Monday should use it) and log in.
+   Claude Code: run `claude` once as `admin` (and as `monday` if Monday should use it) and log in.
 
 7. Model routing (after `hermes model` stored the Anthropic keys):
 
    ```sh
-   ssh kemal@monday 'sudo bash /root/MyMonday/server/bootstrap.sh kemal routing'
+   ssh admin@monday 'sudo bash /root/MyMonday/server/bootstrap.sh admin routing'
    ```
 
    Opus 5.5 is the main model and does the work. Through the official `advanced-delegation`
@@ -100,26 +104,35 @@ packages; for root work it gives the operator the command.
    Tasks with no option run on Opus. "Advice only" is an instruction in the route description
    and SOUL.md, not a hard limit: subagents inherit the parent's tools.
 
-   Then the memory vault (see [Memory vault](#memory-vault)), once `/srv/projects/brain` exists:
+   Then the memory vault (see [Memory vault](#memory-vault)). A first install creates it empty;
+   a rebuild restores it from backup first (step 9) and runs the phase without `CREATE_VAULT`:
 
    ```sh
-   ssh -t monday 'sudo bash ~/MyMonday/server/bootstrap.sh kemal memory'
+   ssh -t admin@monday 'sudo CREATE_VAULT=yes bash /root/MyMonday/server/bootstrap.sh admin memory'
    ```
 
 8. Gateway service, then reboot and check:
 
    ```sh
-   ssh kemal@monday 'sudo bash /root/MyMonday/server/bootstrap.sh kemal service'
-   ssh kemal@monday 'sudo reboot'
-   ssh kemal@monday 'sudo -u monday XDG_RUNTIME_DIR=/run/user/$(id -u monday) systemctl --user status hermes-gateway'
+   ssh admin@monday 'sudo bash /root/MyMonday/server/bootstrap.sh admin service'
+   ssh admin@monday 'sudo reboot'
+   ssh admin@monday 'sudo -u monday XDG_RUNTIME_DIR=/run/user/$(id -u monday) systemctl --user status hermes-gateway'
    ```
 
    Send Monday a Telegram message to confirm it answers.
 
+   Workstation and ops (optional, see [docs/remote-workstation.md](../docs/remote-workstation.md)):
+
+   ```sh
+   ssh admin@monday 'sudo bash /root/MyMonday/server/bootstrap.sh admin monster'   # prints the public key(s)
+   # on the workstation: sudo bash monster/setup.sh <owner> <key-file>; sudo bash monster/install-root.sh
+   ssh admin@monday 'sudo bash /root/MyMonday/server/bootstrap.sh admin ops'       # cron + Hermes cron jobs
+   ```
+
 9. Backups (see [Backups](#backups)): create `/etc/mymonday/restic.env` by hand, then
 
    ```sh
-   ssh kemal@monday 'sudo bash /root/MyMonday/server/bootstrap.sh kemal backup'
+   ssh admin@monday 'sudo bash /root/MyMonday/server/bootstrap.sh admin backup'
    ```
 
    On a rebuild, restore before step 6 instead of entering secrets again (see [Restore](#restore)).
@@ -135,9 +148,9 @@ packages; for root work it gives the operator the command.
     lock down, then test in a **new** session within 10 minutes and cancel the automatic revert:
 
     ```sh
-    ssh kemal@monday 'su kemal -c true'   # asks for the password; must succeed
-    ssh kemal@monday 'sudo CONFIRMED_SUDO_PASSWORD=yes bash /root/MyMonday/server/bootstrap.sh kemal lockdown'
-    ssh -t kemal@monday 'sudo -k && sudo true && sudo systemctl stop mymonday-sudo-revert.timer'
+    ssh admin@monday 'su admin -c true'   # asks for the password; must succeed
+    ssh admin@monday 'sudo CONFIRMED_SUDO_PASSWORD=yes bash /root/MyMonday/server/bootstrap.sh admin lockdown'
+    ssh -t admin@monday 'sudo -k && sudo true && sudo systemctl stop mymonday-sudo-revert.timer'
     ```
 
     If the password does not work, wait 10 minutes: password-less sudo comes back by itself.
@@ -145,12 +158,14 @@ packages; for root work it gives the operator the command.
 ## Changes after lockdown
 
 The operator keeps a clone of this repo on the server, pulls changes without sudo, and runs
-the affected phase with sudo (it asks for the password):
+the affected phase with sudo (it asks for the password). The clone needs the same `local.env` as the
+copy in `/root/MyMonday` (every phase reads it), copied once:
 
 ```sh
-ssh kemal@monday 'git clone https://github.com/KBT-0/MyMonday.git ~/MyMonday'   # once
-ssh kemal@monday 'git -C ~/MyMonday pull --ff-only'
-ssh -t kemal@monday 'sudo bash ~/MyMonday/server/bootstrap.sh kemal persona'    # e.g. after a SOUL.md change
+ssh admin@monday 'git clone https://github.com/KBT-0/MyMonday.git ~/MyMonday'   # once
+ssh -t admin@monday 'sudo install -m 600 -o admin -g admin /root/MyMonday/local.env ~/MyMonday/local.env'   # once
+ssh admin@monday 'git -C ~/MyMonday pull --ff-only'
+ssh -t admin@monday 'sudo bash ~/MyMonday/server/bootstrap.sh admin persona'    # e.g. after a SOUL.md change
 ```
 
 Persona changes apply to new sessions: send `/new` to Monday afterwards.
@@ -162,7 +177,7 @@ deduplicated restic snapshot in a Cloudflare R2 bucket:
 
 - `~monday` (Hermes config, keys, memories, sessions; not the reinstallable `hermes-agent`,
   `tools`, `installs`, `cache`, `logs`)
-- `~kemal`
+- `~admin`
 - `/srv/projects` (without `node_modules`, `.venv`, build output and caches)
 
 Retention: 7 daily, 4 weekly, 6 monthly, 10 yearly. Sundays add `restic check --read-data-subset=5%`.
@@ -173,7 +188,7 @@ excludes, drop an oversized early snapshot by hand (nothing secret is printed):
 sudo sh -c 'set -a; . /etc/mymonday/restic.env; RESTIC_PASSWORD_FILE=/etc/mymonday/restic.pass; restic forget <id> --prune'
 ```
 
-On this server the first full snapshot is about 157 MiB of data, 70 MiB stored in R2.
+A first full snapshot of a fresh install is in the order of 150 MiB of data, about half of it stored.
 Root-only credentials mean the assistant account can neither read nor delete its backups.
 
 Credentials, all root-owned and mode 600 in `/etc/mymonday/`:
@@ -208,7 +223,7 @@ On a fresh server after steps 1-5 (both users exist, Hermes installed):
 
 ```sh
 # 1. Put restic.pass (from the password manager) and restic.env back in /etc/mymonday, mode 600.
-sudo bash /root/MyMonday/server/bootstrap.sh kemal backup
+sudo bash /root/MyMonday/server/bootstrap.sh admin backup
 # 2. Stop the gateway if it already runs, then restore. Files come back with their owners.
 sudo mymonday-backup snapshots
 sudo mymonday-backup restore            # or: restore <snapshot-id>
@@ -219,14 +234,14 @@ back with `~/.hermes`, so step 6 is skipped.
 
 ## Memory vault
 
-Monday's long-term memory is plain Markdown in three git repos under `/srv/projects/brain`,
+Monday's long-term memory is plain Markdown in four git repos under `/srv/projects/brain`,
 owned by `monday`, group `projects`:
 
 | Repo | Contents | Indexed |
 |---|---|---|
 | `brain-core` | profile, projects, decisions, preferences, tools | yes |
 | `brain-private` | health, money, people, personal context | yes |
-| `brain-sensitive` | notes with `access: on_request` (sensitive topics and similar) | own project, opened on request |
+| `brain-sensitive` | notes marked `access: on_request` | own project, opened on request |
 | `brain-raw` | immutable source archives (ChatGPT export, secrets redacted) | no |
 
 `brain-core/SCHEMA.md` is the contract: one note per entity, `## Current` / `## History`,
@@ -244,7 +259,10 @@ reindexes them and adds Basic Memory to Hermes as the MCP server `brain` (stdio,
 the four repos is committed, through the gitleaks hook, so a note Monday breaks or deletes can
 always be restored from git (`git log -- <file>`, `git show <commit>:<file>`). A failed commit
 (a secret, for example) leaves the change staged and shows in
-`journalctl --user -u brain-autocommit`. The repos themselves are data: they come back from the restic backup,
+`journalctl --user -u brain-autocommit`. The vault lives under `PROJECTS_DIR`, so the nightly restic backup covers all four repos (with their git
+history), and the nightly capture (`server/ops/brain_nightly.py`, see docs/memory.md) feeds `brain-raw`
+and the journal (brain-raw keeps every session, sensitive topics included, with only secrets redacted;
+see docs/memory.md). The repos themselves are data: they come back from the restic backup,
 not from this script. The vault is not pushed anywhere; git history on the server plus the
 encrypted R2 backup are the copies.
 
@@ -258,7 +276,7 @@ sudo -u monday -H git -c user.name=Monday -c user.email=monday@monday.local -C /
 
 | Phase | Changes |
 |---|---|
-| base | `apt full-upgrade`; packages: git curl jq tmux htop ufw restic build-essential ca-certificates sudo unattended-upgrades unzip libatomic1 gnupg acl; unattended-upgrades security only, no auto reboot (`/etc/apt/apt.conf.d/20auto-upgrades`, `51unattended-upgrades-local`); hostname `monday` (+ cloud-init `preserve_hostname: true`); timezone UTC; 2 GB `/swapfile`, `vm.swappiness=10` |
+| base | `apt full-upgrade`; packages: git curl jq tmux htop ufw restic build-essential ca-certificates sudo unattended-upgrades unzip libatomic1 gnupg acl; unattended-upgrades security only, no auto reboot (`/etc/apt/apt.conf.d/20auto-upgrades`, `51unattended-upgrades-local`); hostname `monday` (+ cloud-init `preserve_hostname: true`); timezone `SERVER_TIMEZONE` (default UTC); 2 GB `/swapfile`, `vm.swappiness=10` |
 | user | operator with group sudo, password-less sudo in `/etc/sudoers.d/90-<user>`, root's authorized_keys copied |
 | tailscale | official apt repo `pkgs.tailscale.com`, `tailscale up --hostname=monday` |
 | harden | `/etc/ssh/sshd_config.d/00-mymonday.conf` (PasswordAuthentication no, KbdInteractiveAuthentication no, PermitRootLogin no); ufw default deny incoming, allow in on tailscale0, allow 41641/udp |
@@ -267,25 +285,27 @@ sudo -u monday -H git -c user.name=Monday -c user.email=monday@monday.local -C /
 | hermes | Hermes Agent for `monday` via `hermes-agent.nousresearch.com/install.sh` into `~/.hermes` (no setup; no secrets) |
 | persona | `~/.hermes/SOUL.md` (default kept as `SOUL.md.default`), `~/.hermes/skins/monday.yaml`, `display.skin: monday` |
 | routing | `advanced-delegation` plugin, `model.default: claude-opus-5-5`, `delegation.backend: model_map` with routes `light` (Sonnet) and `advisor` (Fable) |
-| memory | `uv tool install basic-memory` (if missing), Basic Memory projects `brain-core`, `brain-private` and `brain-sensitive` (repo created on first run, with the gitleaks hook), `basic-memory reindex`, Hermes MCP server `brain`, gateway restart, `/usr/local/bin/brain-autocommit` + user timer `brain-autocommit.timer` |
+| memory | gitleaks release binary (pinned version, sha256-checked) in `/usr/local/bin`; `BRAIN_DIR` and the repos `brain-core`, `brain-private`, `brain-sensitive`, `brain-raw` (git, gitleaks pre-commit hook; created only with `CREATE_VAULT=yes`), `brain-core/SCHEMA.md` on first run, `brain-raw/.gitignore` with `*.quarantine/`, skill `personal-memory-vault`; `uv tool install basic-memory==<pinned>` (if missing), Basic Memory projects `brain-core`, `brain-private` and `brain-sensitive` (repo created on first run, with the gitleaks hook), `basic-memory reindex`, Hermes MCP server `brain`, gateway restart, `/usr/local/bin/brain-autocommit` + user timer `brain-autocommit.timer` |
 | service | `loginctl enable-linger monday`; `hermes gateway install` (systemd user unit, starts at boot) |
 | desktop | apt xvfb x11vnc novnc websockify; user units `xvfb`, `x11vnc`, `novnc`, `vnc-chromium`, `hermes-webui` in `/etc/systemd/user` (ConditionUser, hand-made copies in `~monday/.config/systemd/user` removed); `~monday/apps/hermes-webui` cloned at a pinned commit; `tailscale serve` :443 → webui, :6080 off |
+| monster | `~/.hermes/skills/monster` (+ references; a live `references/local.md` is kept), `/usr/local/bin/monster-wake`; for the agent: keys `id_ed25519_monster` (+ `id_ed25519_mac` when `MAC_HOST` is set), a managed block in `~/.ssh/config` with `monster`, `monster-phone1/2` (when set) and `mac` (rest of the file kept) |
+| ops | `OPS_DIR` (scripts + `local.env` copy + `state/`), `~/.hermes/scripts/{spend_summary.sh,brain_nightly.py}` wrappers, the managed block in the agent's crontab (`server/ops/crontab.in`), Hermes cron jobs via `server/ops/hermes-cron.sh` (created once) |
 | lockdown | removes `/etc/sudoers.d/90-<admin>` (sudo then asks for the password), marker `/etc/mymonday/sudo-password-required`, 10-minute revert timer `mymonday-sudo-revert` |
 | backup | `/usr/local/sbin/mymonday-backup`, `mymonday-backup.{service,timer}` (+ drop-in with the user names), `/etc/mymonday` (700), generated `restic.pass`; `restic init` and the timer once `restic.env` exists |
 
-Override defaults with `AGENT_USER`, `PROJECTS_DIR`, `PROJECTS_GROUP`, `SERVER_HOSTNAME`,
-`SERVER_TIMEZONE`, `SWAP_SIZE`.
+Override defaults with `AGENT_USER`, `PROJECTS_DIR`, `PROJECTS_GROUP`, `SWAP_SIZE` in the environment;
+`SERVER_HOSTNAME`, `SERVER_TIMEZONE`, `BRAIN_DIR`, `OPS_DIR` and the personal values in `local.env`.
 
 ## Telegram token rotation
 
-Do this whenever the bot token may have been exposed (the first token came through Nous's
+Do this whenever the bot token may have been exposed (for example a token created through Nous's
 hosted onboarding bot). Monday is offline from the revoke until the new token is in.
 
 1. Telegram, @BotFather: `/mybots` → the bot → **API Token** → **Revoke current token**. Copy the new token.
 2. On the server, as `monday`:
 
    ```sh
-   ssh -t kemal@monday sudo -iu monday
+   ssh -t admin@monday sudo -iu monday
    hermes gateway setup     # Telegram → Manual → paste the new token; keep the allowlist as is
    systemctl --user restart hermes-gateway
    grep '^TELEGRAM_ALLOWED_USERS' ~/.hermes/.env   # only your user ID
@@ -337,14 +357,15 @@ maintainer scripts as root.
 - Monday can run shell commands as `monday`. A prompt injection in content it reads can act with
   that user's rights: its own files, `/srv/projects`, and the API keys in its `~/.hermes`.
   It cannot reach root or the operator's home. Keep project secrets out of `/srv/projects`.
-- `kemal`'s sudo asks for its password after the `lockdown` phase. Before that (during the
+- `admin`'s sudo asks for its password after the `lockdown` phase. Before that (during the
   unattended phases) it is password-less.
 - With ufw `deny`, public port 22 is dropped, so a test shows a timeout rather than "connection refused".
 - SSH over the public IP is closed after `harden`. Access is via Tailscale only; the provider's
-  web console is the fallback (log in as `kemal` with its console password).
+  web console is the fallback (log in as `admin` with its console password).
 - Hermes's optional `cua-driver` (computer use) does not install on a headless server (needs libX11).
   Not needed here.
 
 ## Open items
 
-- Restricted SSH entry for a second machine (forced command).
+- Second phone as a backup waker (`MONSTER_PHONE2`).
+- Turkish-aware lexical search in Basic Memory (upstream; see the personal-memory-vault skill).

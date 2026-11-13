@@ -21,21 +21,24 @@
 #   persona   install the Monday persona (SOUL.md) for AGENT_USER
 #   routing   Opus main model + delegation routes (Sonnet "light", Fable "advisor").
 #             Run after `hermes model` has stored the Anthropic key(s).
-#   memory    Basic Memory over the brain vault (PROJECTS_DIR/brain/brain-core and
-#             brain-private), wired into Hermes as the MCP server "brain"; hourly
-#             auto-commit of the vault repos as AGENT_USER
+#   memory    the memory vault BRAIN_DIR (brain-core, brain-private, brain-sensitive, brain-raw: git
+#             repos with a gitleaks hook; created only with CREATE_VAULT=yes, else restored from
+#             backup), SCHEMA.md on first run, Basic Memory as the Hermes MCP server "brain", the
+#             personal-memory-vault skill, hourly auto-commit of the vault repos as AGENT_USER
 #   desktop   visible browser for AGENT_USER: Xvfb, x11vnc + noVNC (loopback only), Chromium with
 #             CDP, and Hermes WebUI on the tailnet (tailscale serve :443). Run after `service`.
 #   service   run the Hermes gateway as AGENT_USER's service that survives reboot
-#   monster   SSH key + `ssh monster` alias for AGENT_USER and the monster skill (the owner's
-#             workstation; the Monster side is monster/setup.sh). Prints the public key.
+#   monster   SSH keys + `ssh monster`, phone and (optional) `ssh mac` aliases for AGENT_USER and the
+#             monster skill (the owner's workstation; its side is monster/setup.sh). Prints the public keys.
+#   ops       server/ops jobs in OPS_DIR (lead notifications, spend summary, nightly memory capture),
+#             AGENT_USER's crontab block and Hermes cron jobs. After monster.
 #   backup    nightly encrypted restic backup to R2 as root. Enables the timer once
 #             /etc/mymonday/restic.env (R2 credentials, entered by hand) exists.
 #   lockdown  last step: <admin-user>'s sudo requires its password. Needs a password set and
 #             CONFIRMED_SUDO_PASSWORD=yes; restores itself in 10 min unless cancelled.
 #
 # With no phase given, runs: base user tailscale agent userland hermes persona
-# (harden, routing, memory, service, desktop, monster, backup and lockdown are always explicit: they need a human step first).
+# (harden, routing, memory, service, desktop, monster, ops, backup and lockdown are always explicit: they need a human step first).
 #
 # Environment overrides:
 #   AGENT_USER        default: monday
@@ -43,9 +46,12 @@
 #   SERVER_HOSTNAME   default: monday
 #   SERVER_TIMEZONE   default: UTC
 #   SWAP_SIZE         default: 2G
-#   MONSTER_HOST      Monster's Tailscale IP; MONSTER_USER default: owner
-#   MONSTER_PHONE1/2  Tailscale IPs of the Wake-on-LAN phones at Monster's home (Termux sshd :8022)
-#   These personal values live in local.env next to this repo's README (git-ignored).
+#   BRAIN_DIR         default: PROJECTS_DIR/brain;  OPS_DIR default: PROJECTS_DIR/monday-ops
+#   OWNER_NAME, ASSISTANT_LANGUAGE, ASSISTANT_WELCOME (persona), MONSTER_HOST/USER, optional
+#   MONSTER_PHONE1/2 and MAC_HOST/USER (monster):
+#   personal values, read from local.env next to this repo's README
+#   (git-ignored; template local.env.example). A key set in local.env wins over the same
+#   variable in the environment: one source of truth.
 #
 # shellcheck disable=SC2016  # as_user bodies are single-quoted on purpose: they expand
 #                            # in the target user's shell ($HOME, $PATH), not root's.
@@ -68,10 +74,15 @@ PROJECTS_GROUP="${PROJECTS_GROUP:-projects}"
 SUDO_LOCK_MARKER=/etc/mymonday/sudo-password-required
 REVERT_UNIT=mymonday-sudo-revert
 [ "$AGENT_USER" != "$USERNAME" ] || { echo "AGENT_USER must differ from <admin-user>" >&2; exit 2; }
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+LOCAL_ENV="$SCRIPT_DIR/../local.env"
+# shellcheck disable=SC1090  # personal values, not in git
+[ -f "$LOCAL_ENV" ] && . "$LOCAL_ENV"
 SERVER_HOSTNAME="${SERVER_HOSTNAME:-monday}"
 SERVER_TIMEZONE="${SERVER_TIMEZONE:-UTC}"
 SWAP_SIZE="${SWAP_SIZE:-2G}"
-SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+BRAIN_DIR="${BRAIN_DIR:-$PROJECTS_DIR/brain}"
+OPS_DIR="${OPS_DIR:-$PROJECTS_DIR/monday-ops}"
 
 export DEBIAN_FRONTEND=noninteractive
 APT_OPTS=(-y -o Dpkg::Options::=--force-confdef -o Dpkg::Options::=--force-confold)
@@ -92,6 +103,15 @@ as_user() {
 
 # as_agent <script>: as_user for AGENT_USER.
 as_agent() { as_user "$AGENT_USER" "$1"; }
+
+# agent_install <mode> <dest> < content: write a file into an agent-owned place AS the agent (temp file
+# in the same folder, then rename), so root never writes through a path the agent controls (a symlink
+# planted there would otherwise turn a root write into a write anywhere). Folders are created 700 by the
+# agent when missing. Paths come from this script, never from the agent.
+agent_install() {
+  local d; d="$(dirname "$2")"
+  as_agent "set -e; umask 077; mkdir -p '$d'; t=\$(mktemp '$d/.mymonday.XXXXXX'); cat > \"\$t\"; chmod $1 \"\$t\"; mv -f \"\$t\" '$2'"
+}
 
 phase_base() {
   log "apt full-upgrade"
@@ -249,10 +269,8 @@ phase_agent() {
   # Keep the user's systemd manager running without a login, for the gateway service.
   loginctl enable-linger "$AGENT_USER"
   # So `sudo -iu monday` can reach its systemd user manager (systemctl --user, hermes gateway).
-  local rc; rc="$(home_of "$AGENT_USER")/.bashrc"
-  grep -q '# systemd user bus (mymonday)' "$rc" 2>/dev/null ||
-    printf '\n# systemd user bus (mymonday)\nexport XDG_RUNTIME_DIR="/run/user/$(id -u)"\n' >> "$rc"
-  chown "$AGENT_USER:$AGENT_USER" "$rc"
+  as_agent 'grep -q "# systemd user bus (mymonday)" ~/.bashrc 2>/dev/null ||
+    printf "\n# systemd user bus (mymonday)\nexport XDG_RUNTIME_DIR=\"/run/user/\$(id -u)\"\n" >> ~/.bashrc'
 
   log "agent projects: $PROJECTS_DIR (owner $AGENT_USER; $USERNAME works there via sudo -u $AGENT_USER)"
   command -v setfacl >/dev/null || apt-get "${APT_OPTS[@]}" install acl
@@ -332,12 +350,23 @@ phase_persona() {
   hh="$(home_of "$AGENT_USER")/.hermes"
   [ -d "$hh" ] || die "Hermes is not installed for $AGENT_USER (run the hermes phase)"
   # Keep Hermes's seeded default once, for reference.
-  if [ -f "$hh/SOUL.md" ] && [ ! -f "$hh/SOUL.md.default" ]; then
-    cp -p "$hh/SOUL.md" "$hh/SOUL.md.default"
-  fi
-  install -m 600 -o "$AGENT_USER" -g "$AGENT_USER" "$src/SOUL.md" "$hh/SOUL.md"
-  install -d -m 700 -o "$AGENT_USER" -g "$AGENT_USER" "$hh/skins"
-  install -m 644 -o "$AGENT_USER" -g "$AGENT_USER" "$src/skins/monday.yaml" "$hh/skins/monday.yaml"
+  as_agent '[ ! -f ~/.hermes/SOUL.md ] || [ -e ~/.hermes/SOUL.md.default ] || cp -p ~/.hermes/SOUL.md ~/.hermes/SOUL.md.default'
+  [ -n "${OWNER_NAME:-}" ] || die "set OWNER_NAME (and ASSISTANT_LANGUAGE) in local.env"
+  # SOUL.md is a template: {{KEY}} -> value (| and & escaped for sed), the template note dropped
+  local k v sedargs=(-e '/^<!-- Template:/,/^$/d')
+  for k in OWNER_NAME ASSISTANT_LANGUAGE SERVER_HOSTNAME AGENT_USER PROJECTS_DIR BRAIN_DIR; do
+    v="${!k:-}"; [ "$k" != ASSISTANT_LANGUAGE ] || v="${v:-English}"
+    v="${v//\\/\\\\}"; v="${v//|/\\|}"; v="${v//&/\\&}"
+    sedargs+=(-e "s|{{$k}}|$v|g")
+  done
+  local soul; soul="$(mktemp)"   # root's own temp file, checked before the agent gets it
+  sed "${sedargs[@]}" "$src/SOUL.md" > "$soul"
+  ! grep -q '{{[A-Z_]*}}' "$soul" || { rm -f "$soul"; die "unfilled placeholder in SOUL.md"; }
+  agent_install 600 "$hh/SOUL.md" < "$soul"; rm -f "$soul"
+  # skin: the welcome line from local.env (ASSISTANT_WELCOME), else the file's default
+  local w="${ASSISTANT_WELCOME:-}"; w="${w//[\"\\|&]/}"   # no quote, backslash, | or & (YAML + sed)
+  if [ -n "$w" ]; then sed "s|^  welcome: .*|  welcome: \"$w\"|" "$src/skins/monday.yaml"; else cat "$src/skins/monday.yaml"; fi |
+    agent_install 644 "$hh/skins/monday.yaml"
   as_agent '"$HOME/.local/bin/hermes" config set display.skin monday'
 }
 
@@ -358,25 +387,96 @@ phase_routing() {
   '
 }
 
+GITLEAKS_VERSION=8.30.1
+# sha256 of the release tarballs, from gitleaks_<version>_checksums.txt of the GitHub release
+GITLEAKS_SHA256_arm64=e4a487ee7ccd7d3a7f7ec08657610aa3606637dab924210b3aee62570fb4b080
+GITLEAKS_SHA256_x64=551f6fc83ea457d62a0d98237cbad105af8d557003051f41f3e7ca7b3f2470eb
+
+# install_gitleaks: the pinned release binary to /usr/local/bin/gitleaks (root-owned), checked against
+# the sha256 above; skipped when that version is already there. Any other gitleaks first in PATH that
+# is older than 8.19 fails the phase loudly.
+install_gitleaks() {
+  local arch sum tmp v
+  case "$(uname -m)" in
+    aarch64) arch=arm64 sum=$GITLEAKS_SHA256_arm64 ;;
+    x86_64) arch=x64 sum=$GITLEAKS_SHA256_x64 ;;
+    *) die "no pinned gitleaks for $(uname -m)" ;;
+  esac
+  if [ "$(/usr/local/bin/gitleaks version 2>/dev/null)" != "$GITLEAKS_VERSION" ]; then
+    log "gitleaks $GITLEAKS_VERSION ($arch), sha256-checked"
+    tmp="$(mktemp -d)"
+    curl -fsSL -o "$tmp/gl.tgz" \
+      "https://github.com/gitleaks/gitleaks/releases/download/v$GITLEAKS_VERSION/gitleaks_${GITLEAKS_VERSION}_linux_$arch.tar.gz"
+    echo "$sum  $tmp/gl.tgz" | sha256sum -c --quiet - || { rm -rf "$tmp"; die "gitleaks download: sha256 mismatch"; }
+    tar -xzf "$tmp/gl.tgz" -C "$tmp" gitleaks
+    install -o root -g root -m 755 "$tmp/gitleaks" /usr/local/bin/gitleaks
+    rm -rf "$tmp"
+  fi
+  v="$(PATH=/usr/local/bin:/usr/bin:/bin gitleaks version 2>/dev/null | sed 's/^v//')"
+  [ "$(printf '%s\n8.19.0\n' "$v" | sort -V | head -n1)" = 8.19.0 ] || die "gitleaks ${v:-missing} is older than 8.19"
+}
+
+BASIC_MEMORY_VERSION=1.0.0
+
+# install_skill <name> <dest under ~/.hermes/skills>: SKILL.md + references/*.md of server/hermes/skills/<name>,
+# written as the agent. references/local.md (the owner's private rules, git-ignored) is never overwritten:
+# a copy in the repo tree is installed only when the live skill has none.
+install_skill() {
+  local src="$SCRIPT_DIR/hermes/skills/$1" dst; dst="$(home_of "$AGENT_USER")/.hermes/skills/$2"
+  local f to
+  agent_install 644 "$dst/SKILL.md" < "$src/SKILL.md"
+  for f in "$src/references/"*.md; do
+    [ -e "$f" ] || continue
+    to="$dst/references/${f##*/}"
+    if [ "${f##*/}" = local.md ] && [ -e "$to" ]; then continue; fi
+    agent_install 644 "$to" < "$f"
+  done
+}
+
 phase_memory() {
   require_agent
-  local brain="$PROJECTS_DIR/brain"
-  log "memory: Basic Memory over $brain, MCP server \"brain\" for $AGENT_USER"
-  [ -d "$brain/brain-core/.git" ] || die "missing $brain/brain-core (the vault repos are restored from backup, see README)"
+  local brain="$BRAIN_DIR" r
+  log "memory: vault $brain, Basic Memory as MCP server \"brain\" for $AGENT_USER"
+  # gitleaks for the vault's pre-commit hook and the nightly export scan (both use the `git`/`dir`
+  # subcommands of gitleaks >= 8.19; Debian 13's package is older)
+  install_gitleaks
+  if [ ! -d "$brain/brain-core/.git" ]; then
+    # A rebuild restores the vault from backup first (server/README.md, Restore): creating empty repos
+    # over a restore target would mix two histories, so a new vault needs an explicit yes.
+    [ "${CREATE_VAULT:-}" = yes ] ||
+      die "missing $brain/brain-core: restore it from backup, or set CREATE_VAULT=yes for a new, empty vault"
+  fi
+  # the vault lives in agent-owned PROJECTS_DIR (setgid group): folders and files are made by the agent
+  for r in brain-core brain-private brain-sensitive brain-raw; do
+    as_agent "set -e; umask 007; mkdir -p '$brain/$r'; chmod 2770 '$brain' '$brain/$r'
+      [ -d '$brain/$r/.git' ] || git -C '$brain/$r' init -q -b main"
+    # same hook in every repo, from the repo copy (re-run = update)
+    agent_install 755 "$brain/$r/.git/hooks/pre-commit" < "$SCRIPT_DIR/memory/pre-commit-gitleaks"
+  done
+  # SCHEMA.md: the vault contract, first run only (afterwards it is the owner's file)
+  if [ ! -e "$brain/brain-core/SCHEMA.md" ]; then
+    agent_install 660 "$brain/brain-core/SCHEMA.md" < "$SCRIPT_DIR/memory/SCHEMA.md"
+  fi
+  # a night whose export tripped gitleaks is moved to <day>.quarantine: never auto-commit it
+  as_agent "grep -qxF '*.quarantine/' '$brain/brain-raw/.gitignore' 2>/dev/null || echo '*.quarantine/' >> '$brain/brain-raw/.gitignore'"
+  # how the assistant works with the vault (procedures, Basic Memory pitfalls, nightly capture)
+  install_skill personal-memory-vault productivity/personal-memory-vault
   # Hourly auto-commit, so the git history (the "never lose a memory" layer) has everything.
   # Script root-owned; units are user units limited to AGENT_USER.
   install -m 755 "$SCRIPT_DIR/memory/brain-autocommit" /usr/local/bin/brain-autocommit
   local u
   install -d -m 755 /etc/systemd/user
   for u in brain-autocommit.service brain-autocommit.timer; do
-    sed "s/^ConditionUser=.*/ConditionUser=$AGENT_USER/" "$SCRIPT_DIR/memory/$u" > "/etc/systemd/user/$u"
+    sed -e "s/^ConditionUser=.*/ConditionUser=$AGENT_USER/" -e "s|^Environment=BRAIN=.*|Environment=BRAIN=$brain|" \
+      "$SCRIPT_DIR/memory/$u" > "/etc/systemd/user/$u"
     chmod 644 "/etc/systemd/user/$u"
   done
-  as_agent "BRAIN='$brain'"'
+  as_agent "BRAIN='$brain' BM_VERSION='$BASIC_MEMORY_VERSION'"'
     set -euo pipefail
     export PATH="$HOME/.local/bin:$PATH"
     command -v uv >/dev/null || { echo "uv not found for $USER (installed by the hermes phase)" >&2; exit 1; }
-    command -v basic-memory >/dev/null || uv tool install basic-memory
+    # pinned on first install (Monday may update it later, like any tool it owns)
+    command -v basic-memory >/dev/null || uv tool install "basic-memory==$BM_VERSION"
     bm="$(command -v basic-memory)"
     projects() { python3 -c "import json,os; print(*json.load(open(os.path.expanduser(\"~/.basic-memory/config.json\")))[\"projects\"])" 2>/dev/null || true; }
     # brain-raw stays out of the index: it is an immutable archive, not notes.
@@ -388,24 +488,7 @@ phase_memory() {
     # them, and Monday opens the project only when the owner explicitly asks (SOUL.md).
     # (Basic Memory does not allow nested projects, so it cannot sit inside brain-private.)
     s="$BRAIN/brain-sensitive"
-    if [ ! -d "$s/.git" ]; then
-      mkdir -p "$s"
-      git -C "$s" init -q -b main
-      cp -p "$BRAIN/brain-private/.git/hooks/pre-commit" "$s/.git/hooks/pre-commit"
-    fi
-    # One-off move from the first layout (brain-private/sensitive/); git keeps both histories.
-    if [ -d "$BRAIN/brain-private/sensitive" ]; then
-      for f in "$BRAIN/brain-private/sensitive"/*.md; do
-        [ -e "$f" ] || continue
-        sed "s|^permalink: brain-private/sensitive/|permalink: brain-sensitive/|" "$f" > "$s/$(basename "$f")"
-        rm "$f"
-      done
-      rmdir "$BRAIN/brain-private/sensitive"
-    fi
     projects | tr " " "\n" | grep -qx brain-sensitive || "$bm" project add brain-sensitive "$s"
-    # Drop the .bmignore entry the first layout added (it would hide any folder named sensitive).
-    bmi="$HOME/.basic-memory/.bmignore"
-    if [ -f "$bmi" ]; then sed -i "/^# brain-private\/sensitive is its own project/d; /^sensitive\/\$/d" "$bmi"; fi
     "$bm" reindex
     "$bm" status
     h="$HOME/.local/bin/hermes"
@@ -488,23 +571,75 @@ phase_service() {
 
 phase_monster() {
   require_agent
-  log "monster: ssh alias and skill for $AGENT_USER"
-  # shellcheck disable=SC1091  # personal values, not in git
-  [ -f "$SCRIPT_DIR/../local.env" ] && . "$SCRIPT_DIR/../local.env"
-  local h host="${MONSTER_HOST:?set MONSTER_HOST in local.env}" user="${MONSTER_USER:-owner}"
-  local phone1="${MONSTER_PHONE1:?set MONSTER_PHONE1 in local.env}" phone2="${MONSTER_PHONE2:-127.0.0.9}"
-  h="$(home_of "$AGENT_USER")"
-  install -d -m 700 -o "$AGENT_USER" -g "$AGENT_USER" "$h/.hermes/skills/monster"
-  install -m 644 -o "$AGENT_USER" -g "$AGENT_USER" "$SCRIPT_DIR/hermes/skills/monster/SKILL.md" \
-    "$h/.hermes/skills/monster/SKILL.md"
+  log "monster: ssh aliases and skill for $AGENT_USER"
+  local host="${MONSTER_HOST:?set MONSTER_HOST in local.env}" user="${MONSTER_USER:?set MONSTER_USER in local.env}"
+  local phone1="${MONSTER_PHONE1:-}" phone2="${MONSTER_PHONE2:-}"   # optional wakers (monster-wake)
+  local mac="${MAC_HOST:-}" macuser="${MAC_USER:-}"
+  # the skill and its references (procedures only; personal values stay in local.env / ~/.ssh/config,
+  # the owner's private rules in the live references/local.md, which is kept)
+  install_skill monster monster
   install -m 755 "$SCRIPT_DIR/monster/monster-wake" /usr/local/bin/monster-wake
-  as_agent '
+  as_agent "HOST='$host' USER_M='$user' P1='$phone1' P2='$phone2' MAC='$mac' MACUSER='$macuser'"'
     set -euo pipefail
     install -d -m 700 ~/.ssh
     [ -f ~/.ssh/id_ed25519_monster ] || ssh-keygen -q -t ed25519 -N "" -C monday@monday -f ~/.ssh/id_ed25519_monster
-    printf "Host monster\n  HostName %s\n  User %s\n\nHost monster-phone1\n  HostName %s\n  Port 8022\n\nHost monster-phone2\n  HostName %s\n  Port 8022\n\nHost monster monster-phone*\n  IdentityFile ~/.ssh/id_ed25519_monster\n  IdentitiesOnly yes\n  ConnectTimeout 10\n  StrictHostKeyChecking accept-new\n" '"$host"' '"$user"' '"$phone1"' '"$phone2"' > ~/.ssh/config
-    chmod 600 ~/.ssh/config
-    cat ~/.ssh/id_ed25519_monster.pub'
+    # ~/.ssh/config: only the managed block is replaced; anything else in the file stays (block first,
+    # so its values win: ssh keeps the first value it reads)
+    touch ~/.ssh/config; chmod 600 ~/.ssh/config
+    # a config written whole by an older version of this phase (no markers): keep a copy, start fresh
+    if ! grep -q "^# BEGIN MyMonday" ~/.ssh/config && [ "$(head -n 1 ~/.ssh/config)" = "Host monster" ]; then
+      cp -p ~/.ssh/config ~/.ssh/config.bak-mymonday; : > ~/.ssh/config
+    fi
+    {
+      echo "# BEGIN MyMonday (bootstrap.sh monster; edits inside this block are replaced)"
+      printf "Host monster\n  HostName %s\n  User %s\n\n" "$HOST" "$USER_M"
+      [ -z "$P1" ] || printf "Host monster-phone1\n  HostName %s\n  Port 8022\n\n" "$P1"
+      [ -z "$P2" ] || printf "Host monster-phone2\n  HostName %s\n  Port 8022\n\n" "$P2"
+      printf "Host monster monster-phone*\n  IdentityFile ~/.ssh/id_ed25519_monster\n  IdentitiesOnly yes\n  ConnectTimeout 10\n  StrictHostKeyChecking accept-new\n"
+      if [ -n "$MAC" ]; then
+        # the Mac client (clients/mac): its own key, forced to mac-ctl there
+        printf "\nHost mac\n  HostName %s\n  User %s\n  IdentityFile ~/.ssh/id_ed25519_mac\n  IdentitiesOnly yes\n  ConnectTimeout 10\n  StrictHostKeyChecking accept-new\n" "$MAC" "$MACUSER"
+      fi
+      echo "# END MyMonday"
+      sed "/^# BEGIN MyMonday/,/^# END MyMonday/d" ~/.ssh/config
+    } > ~/.ssh/config.new
+    chmod 600 ~/.ssh/config.new; mv ~/.ssh/config.new ~/.ssh/config
+    echo "workstation + phone key:"; cat ~/.ssh/id_ed25519_monster.pub
+    if [ -n "$MAC" ]; then
+      [ -f ~/.ssh/id_ed25519_mac ] || ssh-keygen -q -t ed25519 -N "" -C monday-mac@monday -f ~/.ssh/id_ed25519_mac
+      echo "Mac key (clients/mac/install.sh):"; cat ~/.ssh/id_ed25519_mac.pub
+    fi'
+}
+
+phase_ops() {
+  require_agent
+  log "ops: server jobs in $OPS_DIR, crontab block and Hermes cron jobs for $AGENT_USER"
+  local h f to; h="$(home_of "$AGENT_USER")"
+  [ -f "$LOCAL_ENV" ] || die "missing $LOCAL_ENV (the ops jobs read their settings from it)"
+  # Only code and the local.env copy are written; state/ and anything else in OPS_DIR stay untouched.
+  # OPS_DIR is in agent-owned PROJECTS_DIR: written by the agent (setgid group from PROJECTS_DIR)
+  as_agent "set -e; umask 007; mkdir -p '$OPS_DIR/state'; chmod 2770 '$OPS_DIR' '$OPS_DIR/state'"
+  for f in "$SCRIPT_DIR"/ops/*.py "$SCRIPT_DIR"/ops/hermes-cron.sh; do
+    to="$OPS_DIR/${f##*/}"
+    agent_install 660 "$to" < "$f"
+  done
+  agent_install 640 "$OPS_DIR/local.env" < "$LOCAL_ENV"
+  # Hermes cron scripts must live in ~/.hermes/scripts: thin wrappers that run the OPS_DIR copies
+  printf '#!/bin/sh\nexec python3 %s/spend_summary.py\n' "$OPS_DIR" | agent_install 700 "$h/.hermes/scripts/spend_summary.sh"
+  printf 'import runpy, sys\nsys.path.insert(0, "%s")\nrunpy.run_path("%s/brain_nightly.py", run_name="__main__")\n' \
+    "$OPS_DIR" "$OPS_DIR" | agent_install 700 "$h/.hermes/scripts/brain_nightly.py"
+  # crontab: replace the managed block, drop older unmarked lines that run the same jobs, keep the rest
+  local block cur new
+  block="$(sed -e "s|@OPS_DIR@|$OPS_DIR|g" "$SCRIPT_DIR/ops/crontab.in")"
+  cur="$(crontab -u "$AGENT_USER" -l 2>/dev/null || true)"
+  new="$(mktemp)"   # root's own temp file, not in the agent's folders
+  printf '%s\n' "$cur" | sed '/^# BEGIN MyMonday ops/,/^# END MyMonday ops/d' |
+    grep -vE "$OPS_DIR/lead_watch\.py" | sed '/^$/d' > "$new" || true
+  printf '%s\n' "$block" >> "$new"
+  crontab -u "$AGENT_USER" "$new"; rm -f "$new"
+  crontab -u "$AGENT_USER" -l
+  # Hermes cron jobs (created once, by name)
+  as_agent "OPS_LANG='${OPS_LANG:-en}' ASSISTANT_LANGUAGE='${ASSISTANT_LANGUAGE:-English}' SERVER_TIMEZONE='$SERVER_TIMEZONE' BRAIN_DIR='$BRAIN_DIR' OWNER_NAME='${OWNER_NAME:-the owner}' bash '$OPS_DIR/hermes-cron.sh'"
 }
 
 phase_lockdown() {
@@ -563,7 +698,7 @@ phase_backup() {
 
 for p in "${PHASES[@]}"; do
   case "$p" in
-    base|user|tailscale|harden|agent|userland|hermes|persona|routing|memory|service|desktop|monster|backup|lockdown) "phase_$p" ;;
+    base|user|tailscale|harden|agent|userland|hermes|persona|routing|memory|service|desktop|monster|ops|backup|lockdown) "phase_$p" ;;
     *) die "unknown phase: $p" ;;
   esac
 done

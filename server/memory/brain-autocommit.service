@@ -4,5 +4,6 @@ ConditionUser=monday
 
 [Service]
 Type=oneshot
+Environment=BRAIN=/srv/projects/brain
 ExecStart=/usr/local/bin/brain-autocommit
 Nice=10
