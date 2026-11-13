@@ -2,14 +2,17 @@
 
 [![shellcheck](https://github.com/KBT-0/MyMonday/actions/workflows/shellcheck.yml/badge.svg)](https://github.com/KBT-0/MyMonday/actions/workflows/shellcheck.yml)
 
-**A personal AI work system, built for daily production work.** MyMonday turns a small VPS, a home workstation, a
-laptop and two phones into one setup that gets real work done every day: an always-on assistant on
-Telegram ("Monday", [Hermes Agent](https://hermes-agent.nousresearch.com)) that runs several Claude
-Code project leads on the workstation while the owner is away, wakes, parks and resumes them across
-days, pings only when a human is needed, and keeps a long-term memory with sources.
+**A personal AI work system, built for daily production work.** MyMonday turns a small server, a home
+workstation, a laptop and two phones into one always-on setup: an assistant ("Monday") that wakes the
+workstation when there is work and powers it off when there is none, runs and supervises several AI
+coding leads across projects in parallel, parks them at night and resumes them the next day, and sends
+to the phone only the moments that need a human. It switches between two work modes on its own (phone
+first, or at the laptop with every lead window restored to its saved layout), keeps an auditable
+long-term memory with a source for every fact and a nightly capture of the day's sessions, backs
+everything up encrypted off-site, and rebuilds from one idempotent bootstrap with personal values kept
+out of git.
 
 It is mostly proven third-party tools, glued together by small scripts you can read in an evening.
-Everything is reproducible from this repo; personal values live in one git-ignored `local.env`.
 
 ## What makes it different
 
